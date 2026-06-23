@@ -1,0 +1,64 @@
+---
+// Jump-to-top button, inspired by the typography theme
+---
+
+<button id="jump-to-top" aria-label="回到顶部">
+	<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+		<path d="M12 19V5M5 12l7-7 7 7" />
+	</svg>
+</button>
+
+<script>
+	const btn = document.getElementById('jump-to-top');
+	if (btn) {
+		btn.addEventListener('click', () => {
+			window.scrollTo({ top: 0, behavior: 'smooth' });
+		});
+
+		// Show/hide on scroll
+		window.addEventListener('scroll', () => {
+			if (window.scrollY > 400) {
+				btn.classList.add('visible');
+			} else {
+				btn.classList.remove('visible');
+			}
+		});
+	}
+</script>
+
+<style>
+	#jump-to-top {
+		position: fixed;
+		right: 1rem;
+		bottom: 1rem;
+		z-index: 20;
+		width: 44px;
+		height: 44px;
+		border-radius: 9999px;
+		border: none;
+		background-color: var(--primary-color, #2e405b);
+		color: white;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		opacity: 0;
+		visibility: hidden;
+		transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.2s ease;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	}
+
+	#jump-to-top.visible {
+		opacity: 1;
+		visibility: visible;
+	}
+
+	#jump-to-top:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+	}
+
+	.dark #jump-to-top {
+		background-color: #374151;
+	}
+</style>
