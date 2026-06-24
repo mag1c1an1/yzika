@@ -45,6 +45,8 @@ body {
     padding: 0;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    /* 整体缩放：1 = 100%, 1.1 = 110%, 1.2 = 120%, 以此类推 */
+    zoom: 1;
 }
 
 /* ── Headings ── */
