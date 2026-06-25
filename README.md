@@ -1,5 +1,6 @@
 # Astro Starter Kit: Blog
-
+export BEI_AN='沪ICP备2025147999号-1'
+export BEI_AN_GONGAN='京公网安备11010502057876号'
 ```sh
 npm create astro@latest -- --template blog
 ```
