@@ -1,27 +1,122 @@
 ---
-const today = new Date();
+import { SITE_AUTHOR, SITE_SINCE } from "../consts";
+
+const currentYear = new Date().getFullYear();
+const copyrightDate =
+    SITE_SINCE < currentYear
+        ? `${SITE_SINCE}-${currentYear}`
+        : `${currentYear}`;
 ---
 
 <footer class="site-footer">
-    <p>&copy; {today.getFullYear()} All rights reserved.</p>
+    <div class="footer-meta">
+        <p>&copy; {copyrightDate} {SITE_AUTHOR}</p>
+        <p>All rights reserved.</p>
+        <p class="record-line">
+            <a
+                href="https://beian.miit.gov.cn/"
+                target="_blank"
+                rel="noreferrer"
+            >
+                沪ICP备2025147999号-1
+            </a>
+        </p>
+        <p class="record-line">
+            <a
+                href="https://beian.gov.cn/portal/registerSystemInfo?recordcode=11010502057876"
+                target="_blank"
+                rel="noreferrer"
+            >
+                京公网安备11010502057876号
+            </a>
+        </p>
+        <p>
+            <a
+                href="https://creativecommons.org/licenses/by-nc/4.0/"
+                target="_blank"
+                rel="noreferrer"
+            >
+                CC BY-NC 4.0
+            </a>
+        </p>
+        <a
+            class="cc-logo-link"
+            href="https://creativecommons.org/licenses/by-nc/4.0/"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Creative Commons BY-NC 4.0 License"
+        >
+            <img
+                class="cc-logo"
+                src="https://licensebuttons.net/l/by-nc/4.0/88x31.png"
+                alt="CC BY-NC 4.0"
+                loading="lazy"
+            />
+        </a>
+    </div>
 </footer>
 
 <style>
     .site-footer {
-        padding: 1rem 0;
-        font-size: 0.875rem;
-        color: var(--text-secondary);
-        text-align: left;
+        display: flex;
+        justify-content: center;
+        padding: 0.75rem 0 0;
+        color: var(--text);
     }
 
-    .site-footer p {
+    .footer-meta {
+        display: flex;
+        flex-direction: column;
+        width: fit-content;
+        gap: 0.35rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
+        color: var(--text);
+        opacity: 0.9;
+        text-align: center;
+    }
+
+    .footer-meta p {
         margin: 0;
     }
 
-    @media (max-width: 767px) {
+    .footer-meta a {
+        color: inherit;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 0.15em;
+        overflow-wrap: anywhere;
+    }
+
+    .record-line {
+        line-height: 1.5;
+    }
+
+    .cc-logo-link {
+        display: inline-flex;
+        justify-content: center;
+        text-decoration: none;
+    }
+
+    .cc-logo {
+        display: block;
+        width: 72px;
+        height: auto;
+        border-radius: 4px;
+        opacity: 0.92;
+    }
+
+    @media (min-width: 768px) {
         .site-footer {
+            width: 100%;
+            padding-top: 1rem;
+        }
+
+        .footer-meta {
+            align-items: center;
             text-align: center;
-            padding: 2rem 0;
         }
     }
 </style>

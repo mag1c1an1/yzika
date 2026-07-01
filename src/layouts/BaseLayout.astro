@@ -41,24 +41,24 @@ const { title = SITE_TITLE, description = SITE_DESCRIPTION } = Astro.props;
     <body id="theme-typography" class="font-typography">
         <div class="layout-wrapper">
             <!-- 桌面端侧边栏 -->
-            <header class="sidebar">
+            <aside class="sidebar">
                 <Header />
                 <Footer />
-            </header>
+            </aside>
 
             <!-- 主内容区 (可滚动) -->
             <main class="content-area">
                 <!-- 移动端顶部导航 -->
-                <nav class="mobile-nav md:hidden">
+                <header class="mobile-nav">
                     <Header />
-                </nav>
+                </header>
 
                 <div class="content-inner">
                     <slot />
                 </div>
 
                 <!-- 移动端底部 -->
-                <div class="md:hidden">
+                <div class="mobile-footer">
                     <Footer />
                 </div>
             </main>
@@ -145,6 +145,11 @@ const { title = SITE_TITLE, description = SITE_DESCRIPTION } = Astro.props;
         display: none;
     }
 
+    .mobile-nav,
+    .mobile-footer {
+        display: block;
+    }
+
     @media (min-width: 768px) {
         .layout-wrapper {
             max-width: 80rem;
@@ -154,13 +159,19 @@ const { title = SITE_TITLE, description = SITE_DESCRIPTION } = Astro.props;
         .sidebar {
             display: flex;
             flex-direction: column;
+            align-items: center;
             flex-shrink: 0;
-            width: 280px;
+            width: max-content;
             height: 100vh;
             position: sticky;
             top: 0;
-            padding: 2rem 1.5rem 1rem;
+            padding: 2rem 1rem 0.75rem;
             box-sizing: border-box;
+        }
+
+        .mobile-nav,
+        .mobile-footer {
+            display: none;
         }
 
         .content-area {

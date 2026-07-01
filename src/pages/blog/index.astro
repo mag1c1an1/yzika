@@ -1,5 +1,4 @@
 ---
-import { Image } from "astro:assets";
 import { getCollection } from "astro:content";
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import FormattedDate from "../../components/FormattedDate.astro";
@@ -18,16 +17,6 @@ const posts = (await getCollection("blog")).sort(
                 posts.map((post) => (
                     <li>
                         <a href={`/blog/${post.id}/`} class="post-card">
-                            {post.data.heroImage && (
-                                <div class="card-image">
-                                    <Image
-                                        width={720}
-                                        height={360}
-                                        src={post.data.heroImage}
-                                        alt=""
-                                    />
-                                </div>
-                            )}
                             <div class="card-body">
                                 <h3 class="blog-item-title card-title">
                                     {post.data.title}
@@ -53,7 +42,11 @@ const posts = (await getCollection("blog")).sort(
     .section-title {
         font-size: 1.5rem;
         margin: 0 0 1.5rem 0;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
         color: var(--text);
+        text-align: center;
     }
 
     .post-list {
@@ -76,24 +69,12 @@ const posts = (await getCollection("blog")).sort(
         transform: translateX(4px);
     }
 
-    .card-image {
-        margin-bottom: 0.75rem;
-    }
-
-    .card-image img {
-        display: block;
-        width: 100%;
-        border-radius: 8px;
-        transition: box-shadow 0.2s ease;
-    }
-
-    .post-card:hover .card-image img {
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-    }
-
     .card-title {
         font-size: 1.4rem;
         margin: 0 0 0.25rem 0;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
         line-height: 1.3;
     }
 
