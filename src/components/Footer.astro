@@ -1,5 +1,7 @@
 ---
+import { Image } from "astro:assets";
 import { SITE_AUTHOR, SITE_SINCE } from "../consts";
+import ccLogo from "../assets/licenses/cc-by-nc-88x31.png";
 
 const currentYear = new Date().getFullYear();
 const copyrightDate =
@@ -46,9 +48,9 @@ const copyrightDate =
             rel="noreferrer"
             aria-label="Creative Commons BY-NC 4.0 License"
         >
-            <img
+            <Image
                 class="cc-logo"
-                src="https://licensebuttons.net/l/by-nc/4.0/88x31.png"
+                src={ccLogo}
                 alt="CC BY-NC 4.0"
                 loading="lazy"
             />
