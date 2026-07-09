@@ -1,0 +1,41 @@
+name: Deploy to aliyun
+
+on:
+    push:
+        branches: [main]
+    workflow_dispatch:
+
+# 让同时运行的部署串行,避免旧 push 覆盖新 push
+concurrency:
+    group: deploy-aliyun
+    cancel-in-progress: false
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22.12.0"
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build
+              run: npm run build
+
+            - name: Deploy to server via rsync
+              uses: burnett01/rsync-deployments@7.0.1
+              with:
+                  switches: -avz --delete
+                  path: dist/
+                  remote_path: /var/www/mag1cian/
+                  remote_host: 101.132.60.231
+                  remote_port: "22"
+                  remote_user: root
+                  remote_key: ${{ secrets.DEPLOY_KEY }}
