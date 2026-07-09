@@ -1,56 +1,59 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import FormattedDate from "../components/FormattedDate.astro";
 import { SITE_DESCRIPTION, SITE_TITLE } from "../consts";
+import { visibleBlogPosts } from "../content/utils";
+
+const recentPosts = (await visibleBlogPosts()).slice(0, 2);
 ---
 
 <BaseLayout title={SITE_TITLE} description={SITE_DESCRIPTION}>
-    <h1 class="greeting">🧑‍🚀 Hello!</h1>
-    <p>
-        Welcome to the official <a href="https://astro.build/">Astro</a> blog starter
-        template. This template serves as a lightweight, minimally-styled starting
-        point for anyone looking to build a personal website, blog, or portfolio with
-        Astro.
-    </p>
-    <p>
-        This template comes with a few integrations already configured in your
-        <code>astro.config.mjs</code> file. You can customize your setup with
-        <a href="https://astro.build/integrations">Astro Integrations</a> to add tools
-        like Tailwind, React, or Vue to your project.
-    </p>
-    <p>Here are a few ideas on how to get started with the template:</p>
-    <ul>
-        <li>Edit this page in <code>src/pages/index.astro</code></li>
-        <li>
-            Edit the site header items in <code
-                >src/components/Header.astro</code
-            >
-        </li>
-        <li>
-            Add your name to the footer in <code
-                >src/components/Footer.astro</code
-            >
-        </li>
-        <li>
-            Check out the included blog posts in <code>src/content/blog/</code>
-        </li>
-        <li>
-            Customize the blog post page layout in <code
-                >src/layouts/BlogPost.astro</code
-            >
-        </li>
-    </ul>
-    <p>
-        Have fun! If you get stuck, remember to
-        <a href="https://docs.astro.build/">read the docs</a>
-        or <a href="https://astro.build/chat">join us on Discord</a> to ask questions.
-    </p>
-    <p>
-        Looking for a blog template with a bit more personality? Check out
-        <a href="https://github.com/Charca/astro-blog-template"
-            >astro-blog-template</a
-        >
-        by <a href="https://twitter.com/Charca">Maxi Ferreira</a>.
-    </p>
+    <h1 class="greeting">No Mana</h1>
+    <blockquote>
+        <p>“我们都生活在阴沟里,但仍有人仰望星空。”</p>
+        <footer>—— 王尔德《温德米尔夫人的扇子》</footer>
+    </blockquote>
+    <blockquote>
+        <p>
+            “世界上只有一种真正的英雄主义,那就是在认清生活的真相之后,依然热爱生活。”
+        </p>
+        <footer>—— 罗曼·罗兰《米开朗琪罗传》</footer>
+    </blockquote>
+    <blockquote>
+        <p>“十年饮冰，难凉热血。”</p>
+        <footer>—— 梁启超《饮冰室文集》</footer>
+    </blockquote>
+    <section class="recent-posts">
+        <h2 class="section-title">最近两篇</h2>
+        <ul class="post-list">
+            {
+                recentPosts.map((post) => (
+                    <li>
+                        <a href={`/blog/${post.id}/`} class="post-card">
+                            <div class="card-body">
+                                <h3 class="card-title">{post.data.title}</h3>
+                                {post.data.pubDate && (
+                                    <p class="card-date">
+                                        <FormattedDate
+                                            date={post.data.pubDate}
+                                        />
+                                    </p>
+                                )}
+                                {post.data.description && (
+                                    <p class="card-desc">
+                                        {post.data.description}
+                                    </p>
+                                )}
+                            </div>
+                        </a>
+                    </li>
+                ))
+            }
+        </ul>
+        <p class="more-posts">
+            <a href="/blog/">查看全部 →</a>
+        </p>
+    </section>
 </BaseLayout>
 
 <style>
@@ -82,5 +85,95 @@ import { SITE_DESCRIPTION, SITE_TITLE } from "../consts";
     ul li {
         margin-bottom: 0.5em;
         line-height: 1.6;
+    }
+
+    blockquote {
+        margin: 1.6em 0;
+        padding: 0.4em 1.2em;
+        border-left: 3px solid var(--text);
+        color: var(--text);
+        background: var(--code-bg);
+        font-size: 1.05em;
+        line-height: 1.8;
+    }
+
+    blockquote footer {
+        margin-top: 0.4em;
+        font-size: 0.85em;
+        opacity: 0.7;
+        text-align: right;
+    }
+
+    .recent-posts {
+        margin: 2.5rem 0 0 0;
+    }
+
+    .section-title {
+        font-size: 1.5rem;
+        margin: 0 0 1.5rem 0;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
+        color: var(--text);
+        text-align: center;
+    }
+
+    .post-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+    }
+
+    .post-card {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        transition: transform 0.2s ease;
+    }
+
+    .post-card:hover {
+        transform: translateX(4px);
+    }
+
+    .card-title {
+        font-size: 1.4rem;
+        margin: 0 0 0.25rem 0;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
+        line-height: 1.3;
+    }
+
+    .card-date {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin: 0 0 0.5rem 0;
+    }
+
+    .card-desc {
+        font-size: 0.95rem;
+        color: var(--text-secondary);
+        margin: 0;
+        line-height: 1.5;
+    }
+
+    .more-posts {
+        margin-top: 1.6em;
+        text-align: center;
+        font-size: 0.95rem;
+    }
+
+    .more-posts a {
+        color: var(--text);
+        text-decoration: none;
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+    }
+
+    .more-posts a:hover {
+        opacity: 1;
     }
 </style>

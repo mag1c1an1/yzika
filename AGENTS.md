@@ -30,6 +30,7 @@ No test, lint, or typecheck scripts exist.
 - Blog frontmatter schema (`title`, `description`, `pubDate`, optional `updatedDate` + `heroImage`) defined in `src/content.config.ts`
 - Dynamic blog routes in `src/pages/blog/[...slug].astro`
 - Blog index at `src/pages/blog/index.astro`
+- **Private posts:** `pubDate: ''` (or omitted) is normalized by schema to `undefined` and treated as private. Private posts are filtered out of the home page (latest 2), `/blog/` index, single-page routes (URL returns 404), and RSS. Visibility helpers live in `src/content/utils.ts`: `isPostVisible(post)` and `visibleBlogPosts()` (sorted by `pubDate` desc).
 - Layouts in `src/layouts/`, components in `src/components/`
 - Site metadata in `src/consts.ts` (`SITE_TITLE`, `SITE_DESCRIPTION`)
 
