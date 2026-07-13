@@ -22,7 +22,7 @@ export const screenCaptureOptions: DisplayMediaStreamOptions = {
       max: SCREEN_SHARE_FRAME_RATE,
     },
   },
-  audio: false,
+  audio: true,
 };
 
 export const initialScreenShareEncoding: RTCRtpEncodingParameters = {
