@@ -2,11 +2,367 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 ---
 
-<BaseLayout title="About Me" description="Lorem ipsum dolor sit amet">
+<BaseLayout title="参见蔡哥" description="A streming service for my '蔡哥'">
     <h1 class="page-title">参见，参见蔡哥</h1>
     <span id="peer-status" class="pill">RTCPeerConnection: idle</span>
-    <video id="remote-video" autoplay playsinline controls></video>
+
+    <div class="stack">
+        <div class="section-header">
+            <h3>远程屏幕</h3>
+            <div class="button-row compact">
+                <button id="play" type="button">播放</button>
+                <button id="stop" class="secondary" type="button" disabled>
+                    停止
+                </button>
+            </div>
+        </div>
+        <video id="remote-video" autoplay playsinline controls></video>
+    </div>
+
+    <section class="panel stack log-panel">
+        <h2>事件日志</h2>
+        <ol id="log" class="log"></ol>
+    </section>
 </BaseLayout>
+
+<script>
+    const BROADCASTER_ID = "broadcaster";
+    const SIGNAL_PATH = "/signal/ws";
+    const PLAYBACK_TIMEOUT_MS = 4000;
+    const rtcConfig: RTCConfiguration = {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    };
+
+    type SignalMessage = {
+        type: string;
+        peerId?: string;
+        from?: string;
+        target?: string;
+        sdp?: RTCSessionDescriptionInit;
+        candidate?: RTCIceCandidateInit;
+        message?: string;
+    };
+
+    const playButton = document.querySelector<HTMLButtonElement>("#play");
+    const stopButton = document.querySelector<HTMLButtonElement>("#stop");
+    const remoteVideo =
+        document.querySelector<HTMLVideoElement>("#remote-video");
+    const peerStatus = document.querySelector<HTMLElement>("#peer-status");
+    const logList = document.querySelector<HTMLOListElement>("#log");
+
+    const viewerId = `viewer-${crypto.randomUUID()}`;
+    let signalSocket: WebSocket | undefined;
+    let signalReadyPromise: Promise<void> | undefined;
+    let peerConnection: RTCPeerConnection | undefined;
+    let wantsPlayback = false;
+    let playbackTimeoutId: number | undefined;
+    const pendingIceCandidates: RTCIceCandidateInit[] = [];
+
+    function addLog(message: string) {
+        if (!logList) return;
+
+        const item = document.createElement("li");
+        item.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+        logList.prepend(item);
+    }
+
+    function setStatus(status: string) {
+        if (!peerStatus) return;
+        peerStatus.textContent = `RTCPeerConnection: ${status}`;
+    }
+
+    function setPlaybackControls(isWaitingOrPlaying: boolean) {
+        if (!playButton || !stopButton) return;
+
+        playButton.disabled = isWaitingOrPlaying;
+        stopButton.disabled = !isWaitingOrPlaying;
+    }
+
+    function createSignalUrl(peerId: string) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const params = new URLSearchParams({ peerId });
+        return `${protocol}//${location.host}${SIGNAL_PATH}?${params}`;
+    }
+
+    function connectSignal() {
+        if (signalSocket?.readyState === WebSocket.OPEN) {
+            return Promise.resolve();
+        }
+
+        if (
+            signalSocket?.readyState === WebSocket.CONNECTING &&
+            signalReadyPromise
+        ) {
+            return signalReadyPromise;
+        }
+
+        signalSocket = new WebSocket(createSignalUrl(viewerId));
+
+        signalSocket.addEventListener("message", handleSignalMessage);
+        signalSocket.addEventListener("close", () => {
+            addLog("信令连接已断开");
+            signalReadyPromise = undefined;
+            setStatus("idle");
+        });
+
+        signalReadyPromise = new Promise((resolve, reject) => {
+            if (!signalSocket) {
+                reject(new Error("missing signal socket"));
+                return;
+            }
+
+            signalSocket.addEventListener(
+                "open",
+                () => {
+                    addLog("已连接信令服务");
+                    resolve();
+                },
+                { once: true },
+            );
+
+            signalSocket.addEventListener(
+                "error",
+                () => {
+                    reject(new Error("signal connection failed"));
+                },
+                { once: true },
+            );
+        });
+
+        return signalReadyPromise;
+    }
+
+    function sendSignal(payload: Record<string, unknown>) {
+        if (signalSocket?.readyState !== WebSocket.OPEN) {
+            addLog("信令服务未连接，消息未发送");
+            return;
+        }
+
+        signalSocket.send(JSON.stringify(payload));
+    }
+
+    function requestBroadcasterPlayback() {
+        sendSignal({ type: "viewer-ready", target: BROADCASTER_ID });
+        setStatus("waiting");
+        setPlaybackControls(true);
+        startPlaybackTimeout();
+        addLog("正在请求播放共享屏幕");
+    }
+
+    function startPlaybackTimeout() {
+        clearPlaybackTimeout();
+
+        playbackTimeoutId = window.setTimeout(() => {
+            if (!remoteVideo?.srcObject) {
+                showNoPlayback();
+            }
+        }, PLAYBACK_TIMEOUT_MS);
+    }
+
+    function clearPlaybackTimeout() {
+        if (playbackTimeoutId === undefined) return;
+
+        window.clearTimeout(playbackTimeoutId);
+        playbackTimeoutId = undefined;
+    }
+
+    function showNoPlayback() {
+        clearPlaybackTimeout();
+        closePeerConnection();
+        setStatus("idle");
+        setPlaybackControls(false);
+        addLog("无人播放");
+    }
+
+    async function startPlayback() {
+        wantsPlayback = true;
+        setStatus("connecting");
+        setPlaybackControls(true);
+
+        try {
+            await connectSignal();
+            requestBroadcasterPlayback();
+        } catch (error) {
+            showNoPlayback();
+            console.error(error);
+        }
+    }
+
+    function stopPlayback(addStopLog = true) {
+        wantsPlayback = false;
+        clearPlaybackTimeout();
+        closePeerConnection();
+
+        if (remoteVideo) {
+            remoteVideo.srcObject = null;
+        }
+
+        setStatus("idle");
+        setPlaybackControls(false);
+
+        if (addStopLog) {
+            addLog("停止播放");
+        }
+    }
+
+    async function handleSignalMessage(event: MessageEvent) {
+        if (typeof event.data !== "string") return;
+
+        const message = JSON.parse(event.data) as SignalMessage;
+
+        switch (message.type) {
+            case "welcome": {
+                addLog(`观众已上线：${message.peerId ?? viewerId}`);
+                break;
+            }
+            case "peer-joined": {
+                if (message.peerId === BROADCASTER_ID && wantsPlayback) {
+                    requestBroadcasterPlayback();
+                }
+                break;
+            }
+            case "peer-left": {
+                if (message.peerId === BROADCASTER_ID && wantsPlayback) {
+                    addLog("共享端已离线");
+                    showNoPlayback();
+                }
+                break;
+            }
+            case "offer": {
+                await acceptOffer(message);
+                break;
+            }
+            case "ice-candidate": {
+                await addRemoteIceCandidate(message);
+                break;
+            }
+            case "broadcast-unavailable": {
+                showNoPlayback();
+                break;
+            }
+            case "broadcast-stopped": {
+                addLog("共享已结束");
+                stopPlayback(false);
+                break;
+            }
+            case "error": {
+                if (message.message?.includes("target peer not found")) {
+                    showNoPlayback();
+                } else {
+                    addLog(`信令错误：${message.message ?? "unknown error"}`);
+                }
+                break;
+            }
+        }
+    }
+
+    function createPeerConnection() {
+        closePeerConnection();
+
+        const connection = new RTCPeerConnection(rtcConfig);
+        peerConnection = connection;
+
+        connection.addEventListener("track", (event) => {
+            const [stream] = event.streams;
+            if (!stream || !remoteVideo) return;
+
+            clearPlaybackTimeout();
+            remoteVideo.srcObject = stream;
+            void remoteVideo.play().catch(() => {
+                addLog("浏览器阻止自动播放，请手动点击视频播放。");
+            });
+            setStatus("playing");
+            addLog("开始播放共享屏幕");
+        });
+
+        connection.addEventListener("icecandidate", (event) => {
+            if (!event.candidate) return;
+
+            sendSignal({
+                type: "ice-candidate",
+                target: BROADCASTER_ID,
+                candidate: event.candidate.toJSON(),
+            });
+        });
+
+        connection.addEventListener("connectionstatechange", () => {
+            addLog(`播放连接状态：${connection.connectionState}`);
+
+            if (["failed", "closed"].includes(connection.connectionState)) {
+                stopPlayback(false);
+            }
+        });
+
+        return connection;
+    }
+
+    async function acceptOffer(message: SignalMessage) {
+        if (!message.sdp) return;
+
+        clearPlaybackTimeout();
+        const connection = createPeerConnection();
+
+        await connection.setRemoteDescription(
+            new RTCSessionDescription(message.sdp),
+        );
+        await flushPendingIceCandidates();
+
+        const answer = await connection.createAnswer();
+        await connection.setLocalDescription(answer);
+
+        if (!connection.localDescription) {
+            throw new Error("missing local description");
+        }
+
+        sendSignal({
+            type: "answer",
+            target: BROADCASTER_ID,
+            sdp: connection.localDescription,
+        });
+
+        setStatus("connecting");
+        addLog("已接受共享屏幕邀请");
+    }
+
+    async function addRemoteIceCandidate(message: SignalMessage) {
+        if (!message.candidate) return;
+
+        if (!peerConnection || !peerConnection.remoteDescription) {
+            pendingIceCandidates.push(message.candidate);
+            return;
+        }
+
+        await peerConnection.addIceCandidate(
+            new RTCIceCandidate(message.candidate),
+        );
+    }
+
+    async function flushPendingIceCandidates() {
+        if (!peerConnection || !peerConnection.remoteDescription) return;
+
+        while (pendingIceCandidates.length > 0) {
+            const candidate = pendingIceCandidates.shift();
+            if (candidate) {
+                await peerConnection.addIceCandidate(
+                    new RTCIceCandidate(candidate),
+                );
+            }
+        }
+    }
+
+    function closePeerConnection() {
+        peerConnection?.close();
+        peerConnection = undefined;
+        pendingIceCandidates.length = 0;
+    }
+
+    playButton?.addEventListener("click", startPlayback);
+    stopButton?.addEventListener("click", () => stopPlayback());
+    window.addEventListener("beforeunload", () => stopPlayback(false));
+
+    setPlaybackControls(false);
+    addLog("页面已加载，点击“播放”观看共享屏幕。");
+</script>
 
 <style>
     .page-title {
@@ -32,6 +388,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     }
 
     .pill {
+        display: inline-flex;
         width: fit-content;
         border: 1px solid var(--panel-border);
         border-radius: 999px;
@@ -41,4 +398,89 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         font-size: 0.9rem;
     }
 
+    .panel {
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+        border: 1px solid var(--panel-border);
+        border-radius: 1.25rem;
+        padding: 1.25rem;
+        background: rgba(17, 24, 39, 0.86);
+        box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.18);
+    }
+
+    .stack {
+        display: grid;
+        align-content: start;
+        gap: 1rem;
+    }
+
+    .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+
+    .section-header h3 {
+        margin: 0;
+    }
+
+    .log-panel {
+        overflow: hidden;
+    }
+
+    .log {
+        display: grid;
+        min-height: 8rem;
+        max-height: 16rem;
+        margin: 0;
+        padding-left: 1.5rem;
+        padding-right: 0.5rem;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        gap: 0.35rem;
+        color: var(--muted);
+        font-family:
+            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+            "Liberation Mono", monospace;
+        font-size: 0.9rem;
+    }
+
+    .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+
+    .button-row.compact {
+        gap: 0.5rem;
+    }
+
+    button {
+        border: 1px solid var(--panel-border);
+        border-radius: 999px;
+        padding: 0.45rem 0.9rem;
+        background: var(--text);
+        color: var(--bg);
+        cursor: pointer;
+        font: inherit;
+        transition:
+            opacity 0.2s ease,
+            transform 0.2s ease;
+    }
+
+    button:hover:not(:disabled) {
+        transform: translateY(-1px);
+    }
+
+    button.secondary {
+        background: transparent;
+        color: var(--text);
+    }
+
+    button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
 </style>

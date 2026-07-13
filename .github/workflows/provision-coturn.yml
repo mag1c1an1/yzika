@@ -1,0 +1,119 @@
+name: Provision coturn
+
+on:
+  workflow_dispatch:
+    inputs:
+      turn_public_ip:
+        description: Public IP advertised by coturn
+        required: true
+        default: "101.132.60.231"
+      turn_realm:
+        description: TURN realm / server name
+        required: true
+        default: "mag1cian.top"
+      turn_min_port:
+        description: Minimum UDP relay port
+        required: true
+        default: "49160"
+      turn_max_port:
+        description: Maximum UDP relay port
+        required: true
+        default: "49200"
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Provision coturn on server
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          TURN_USERNAME: ${{ secrets.TURN_USERNAME }}
+          TURN_PASSWORD: ${{ secrets.TURN_PASSWORD }}
+          TURN_PUBLIC_IP: ${{ inputs.turn_public_ip }}
+          TURN_REALM: ${{ inputs.turn_realm }}
+          TURN_MIN_PORT: ${{ inputs.turn_min_port }}
+          TURN_MAX_PORT: ${{ inputs.turn_max_port }}
+        with:
+          host: 101.132.60.231
+          port: 22
+          username: root
+          key: ${{ secrets.DEPLOY_KEY }}
+          envs: TURN_USERNAME,TURN_PASSWORD,TURN_PUBLIC_IP,TURN_REALM,TURN_MIN_PORT,TURN_MAX_PORT
+          script: |
+            set -e
+
+            if [ -z "$TURN_PASSWORD" ]; then
+              echo "Missing GitHub secret TURN_PASSWORD."
+              exit 1
+            fi
+
+            if [ -z "$TURN_USERNAME" ]; then
+              TURN_USERNAME="stream"
+            fi
+
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y coturn
+            elif command -v dnf >/dev/null 2>&1; then
+              dnf install -y coturn
+            elif command -v yum >/dev/null 2>&1; then
+              yum install -y coturn
+            else
+              echo "Unsupported server OS: no apt-get, dnf, or yum found."
+              exit 1
+            fi
+
+            if [ -f /etc/turnserver.conf ]; then
+              cp /etc/turnserver.conf "/etc/turnserver.conf.bak.$(date +%Y%m%d%H%M%S)"
+            fi
+
+            cat > /etc/turnserver.conf <<EOF
+            listening-port=3478
+            listening-ip=0.0.0.0
+            external-ip=$TURN_PUBLIC_IP
+
+            min-port=$TURN_MIN_PORT
+            max-port=$TURN_MAX_PORT
+
+            realm=$TURN_REALM
+            server-name=$TURN_REALM
+
+            lt-cred-mech
+            user=$TURN_USERNAME:$TURN_PASSWORD
+
+            fingerprint
+            no-multicast-peers
+            no-cli
+            EOF
+
+            if [ -f /etc/default/coturn ]; then
+              if grep -q '^#\?TURNSERVER_ENABLED=' /etc/default/coturn; then
+                sed -i 's/^#\?TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+              else
+                printf '\nTURNSERVER_ENABLED=1\n' >> /etc/default/coturn
+              fi
+            fi
+
+            SERVICE_NAME=""
+            for candidate in coturn turnserver; do
+              if systemctl list-unit-files | grep -q "^${candidate}.service"; then
+                SERVICE_NAME="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$SERVICE_NAME" ]; then
+              echo "Could not find coturn systemd service."
+              systemctl list-unit-files | grep -E 'coturn|turnserver' || true
+              exit 1
+            fi
+
+            systemctl daemon-reload
+            systemctl enable "$SERVICE_NAME"
+            systemctl restart "$SERVICE_NAME"
+            systemctl is-active --quiet "$SERVICE_NAME"
+
+            echo "coturn is active as ${SERVICE_NAME}.service"
+            if command -v ss >/dev/null 2>&1; then
+              ss -lunt | grep ':3478' || true
+            fi

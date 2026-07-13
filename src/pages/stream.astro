@@ -2,7 +2,7 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 ---
 
-<BaseLayout title="Let's streaming" description="Screen streaming demo">
+<BaseLayout title="Let's Streaming" description="Screen streaming">
     <h1 class="page-title">Let's Streaming</h1>
     <span id="peer-status" class="pill">RTCPeerConnection: idle</span>
 
@@ -31,6 +31,22 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 </BaseLayout>
 
 <script>
+    const BROADCASTER_ID = "broadcaster";
+    const SIGNAL_PATH = "/signal/ws";
+    const rtcConfig: RTCConfiguration = {
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    };
+
+    type SignalMessage = {
+        type: string;
+        peerId?: string;
+        from?: string;
+        target?: string;
+        sdp?: RTCSessionDescriptionInit;
+        candidate?: RTCIceCandidateInit;
+        message?: string;
+    };
+
     const shareButton = document.querySelector<HTMLButtonElement>("#share");
     const stopShareButton =
         document.querySelector<HTMLButtonElement>("#stop-share");
@@ -38,7 +54,11 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     const peerStatus = document.querySelector<HTMLElement>("#peer-status");
     const logList = document.querySelector<HTMLOListElement>("#log");
 
+    let signalSocket: WebSocket | undefined;
     let screenStream: MediaStream | undefined;
+    const knownViewers = new Set<string>();
+    const peerConnections = new Map<string, RTCPeerConnection>();
+    const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
 
     function addLog(message: string) {
         if (!logList) return;
@@ -53,6 +73,24 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         peerStatus.textContent = `RTCPeerConnection: ${status}`;
     }
 
+    function updateStatus() {
+        if (screenStream) {
+            const viewerCount = peerConnections.size;
+            setStatus(
+                viewerCount > 0
+                    ? `screen sharing (${viewerCount} viewer${viewerCount > 1 ? "s" : ""})`
+                    : "screen sharing",
+            );
+            return;
+        }
+
+        setStatus(
+            signalSocket?.readyState === WebSocket.OPEN
+                ? "signal connected"
+                : "idle",
+        );
+    }
+
     function setSharingState(isSharing: boolean) {
         if (!shareButton || !stopShareButton) return;
 
@@ -60,7 +98,239 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         stopShareButton.disabled = !isSharing;
     }
 
+    function createSignalUrl(peerId: string) {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        const params = new URLSearchParams({ peerId });
+        return `${protocol}//${location.host}${SIGNAL_PATH}?${params}`;
+    }
+
+    function connectSignal() {
+        if (
+            signalSocket?.readyState === WebSocket.OPEN ||
+            signalSocket?.readyState === WebSocket.CONNECTING
+        ) {
+            return;
+        }
+
+        signalSocket = new WebSocket(createSignalUrl(BROADCASTER_ID));
+
+        signalSocket.addEventListener("open", () => {
+            addLog("已连接信令服务");
+            updateStatus();
+        });
+
+        signalSocket.addEventListener("message", handleSignalMessage);
+
+        signalSocket.addEventListener("close", () => {
+            addLog("信令连接已断开");
+            updateStatus();
+        });
+
+        signalSocket.addEventListener("error", () => {
+            addLog("信令连接错误");
+        });
+    }
+
+    function sendSignal(payload: Record<string, unknown>) {
+        if (signalSocket?.readyState !== WebSocket.OPEN) {
+            addLog("信令服务未连接，消息未发送");
+            return;
+        }
+
+        signalSocket.send(JSON.stringify(payload));
+    }
+
+    async function handleSignalMessage(event: MessageEvent) {
+        if (typeof event.data !== "string") return;
+
+        const message = JSON.parse(event.data) as SignalMessage;
+
+        switch (message.type) {
+            case "welcome": {
+                addLog(`主播已上线：${message.peerId ?? BROADCASTER_ID}`);
+                break;
+            }
+            case "peer-joined": {
+                if (message.peerId && message.peerId !== BROADCASTER_ID) {
+                    knownViewers.add(message.peerId);
+                    addLog(`观众已加入：${message.peerId}`);
+
+                    if (screenStream) {
+                        await startViewerStream(message.peerId);
+                    }
+                }
+                break;
+            }
+            case "peer-left": {
+                if (message.peerId) {
+                    knownViewers.delete(message.peerId);
+                    closeViewerConnection(message.peerId);
+                    addLog(`观众已离开：${message.peerId}`);
+                }
+                break;
+            }
+            case "viewer-ready": {
+                if (!message.from) return;
+
+                knownViewers.add(message.from);
+                addLog(`观众请求播放：${message.from}`);
+
+                if (screenStream) {
+                    await startViewerStream(message.from);
+                } else {
+                    sendSignal({
+                        type: "broadcast-unavailable",
+                        target: message.from,
+                    });
+                }
+                break;
+            }
+            case "answer": {
+                await handleAnswer(message);
+                break;
+            }
+            case "ice-candidate": {
+                await addRemoteIceCandidate(message);
+                break;
+            }
+            case "error": {
+                addLog(`信令错误：${message.message ?? "unknown error"}`);
+                break;
+            }
+        }
+    }
+
+    function createPeerConnection(viewerId: string) {
+        closeViewerConnection(viewerId);
+
+        const peerConnection = new RTCPeerConnection(rtcConfig);
+        peerConnections.set(viewerId, peerConnection);
+
+        peerConnection.addEventListener("icecandidate", (event) => {
+            if (!event.candidate) return;
+
+            sendSignal({
+                type: "ice-candidate",
+                target: viewerId,
+                candidate: event.candidate.toJSON(),
+            });
+        });
+
+        peerConnection.addEventListener("connectionstatechange", () => {
+            addLog(
+                `观众 ${viewerId} 连接状态：${peerConnection.connectionState}`,
+            );
+
+            if (["failed", "closed"].includes(peerConnection.connectionState)) {
+                closeViewerConnection(viewerId);
+            }
+
+            updateStatus();
+        });
+
+        return peerConnection;
+    }
+
+    async function startViewerStream(viewerId: string) {
+        if (!screenStream) {
+            sendSignal({ type: "broadcast-unavailable", target: viewerId });
+            return;
+        }
+
+        try {
+            const peerConnection = createPeerConnection(viewerId);
+
+            for (const track of screenStream.getTracks()) {
+                peerConnection.addTrack(track, screenStream);
+            }
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            if (!peerConnection.localDescription) {
+                throw new Error("missing local description");
+            }
+
+            sendSignal({
+                type: "offer",
+                target: viewerId,
+                sdp: peerConnection.localDescription,
+            });
+
+            addLog(`已向观众 ${viewerId} 发送播放邀请`);
+            updateStatus();
+        } catch (error) {
+            closeViewerConnection(viewerId);
+            addLog(`无法连接观众 ${viewerId}`);
+            console.error(error);
+        }
+    }
+
+    async function handleAnswer(message: SignalMessage) {
+        if (!message.from || !message.sdp) return;
+
+        const peerConnection = peerConnections.get(message.from);
+        if (!peerConnection) return;
+
+        await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(message.sdp),
+        );
+        await flushPendingIceCandidates(message.from);
+        addLog(`观众 ${message.from} 已接受播放`);
+    }
+
+    async function addRemoteIceCandidate(message: SignalMessage) {
+        if (!message.from || !message.candidate) return;
+
+        const peerConnection = peerConnections.get(message.from);
+        if (!peerConnection) return;
+
+        if (!peerConnection.remoteDescription) {
+            const pending = pendingIceCandidates.get(message.from) ?? [];
+            pending.push(message.candidate);
+            pendingIceCandidates.set(message.from, pending);
+            return;
+        }
+
+        await peerConnection.addIceCandidate(
+            new RTCIceCandidate(message.candidate),
+        );
+    }
+
+    async function flushPendingIceCandidates(viewerId: string) {
+        const peerConnection = peerConnections.get(viewerId);
+        const pending = pendingIceCandidates.get(viewerId) ?? [];
+
+        if (!peerConnection || !peerConnection.remoteDescription) return;
+
+        pendingIceCandidates.delete(viewerId);
+
+        for (const candidate of pending) {
+            await peerConnection.addIceCandidate(
+                new RTCIceCandidate(candidate),
+            );
+        }
+    }
+
+    function closeViewerConnection(viewerId: string) {
+        peerConnections.get(viewerId)?.close();
+        peerConnections.delete(viewerId);
+        pendingIceCandidates.delete(viewerId);
+        updateStatus();
+    }
+
+    function stopAllViewerConnections(notifyViewers: boolean) {
+        for (const viewerId of knownViewers) {
+            if (notifyViewers) {
+                sendSignal({ type: "broadcast-stopped", target: viewerId });
+            }
+            closeViewerConnection(viewerId);
+        }
+    }
+
     function stopScreenShare() {
+        stopAllViewerConnections(true);
+
         if (screenStream) {
             for (const track of screenStream.getTracks()) {
                 track.stop();
@@ -74,7 +344,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         }
 
         setSharingState(false);
-        setStatus("idle");
+        updateStatus();
         addLog("停止共享屏幕");
     }
 
@@ -100,8 +370,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             });
 
             setSharingState(true);
-            setStatus("screen sharing");
+            updateStatus();
             addLog("开始共享屏幕");
+
+            for (const viewerId of knownViewers) {
+                await startViewerStream(viewerId);
+            }
         } catch (error) {
             const message =
                 error instanceof DOMException &&
@@ -109,7 +383,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
                     ? "取消了屏幕共享授权"
                     : "共享屏幕失败";
 
-            setStatus("idle");
+            updateStatus();
             addLog(message);
             console.error(error);
         }
@@ -117,8 +391,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
     shareButton?.addEventListener("click", startScreenShare);
     stopShareButton?.addEventListener("click", stopScreenShare);
+    window.addEventListener("beforeunload", () =>
+        stopAllViewerConnections(true),
+    );
 
     setSharingState(false);
+    connectSignal();
     addLog("页面已加载，点击“共享屏幕”开始。");
 </script>
 

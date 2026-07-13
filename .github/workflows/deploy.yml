@@ -23,13 +23,24 @@ jobs:
           node-version: "22.12.0"
           cache: "npm"
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: signal -> target
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
+      - name: Build site
         run: npm run build
 
-      - name: Prepare nginx snippets directory
+      - name: Build signal service
+        run: cargo build --manifest-path signal/Cargo.toml --release
+
+      - name: Prepare server directories
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: 101.132.60.231
@@ -39,6 +50,7 @@ jobs:
           script: |
             set -e
             mkdir -p /etc/nginx/snippets
+            mkdir -p /opt/technological-trappist/signal
 
       - name: Deploy nginx basic auth credentials
         uses: appleboy/ssh-action@v1.2.2
@@ -58,7 +70,7 @@ jobs:
               chmod 640 /etc/nginx/.htpasswd-stream
             fi
 
-      - name: Deploy nginx stream auth snippet
+      - name: Deploy nginx stream and signal snippet
         uses: burnett01/rsync-deployments@7.0.1
         with:
           switches: -avz
@@ -68,6 +80,44 @@ jobs:
           remote_port: "22"
           remote_user: root
           remote_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Deploy signal service unit
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz
+          path: ops/systemd/technological-trappist-signal.service
+          remote_path: /etc/systemd/system/
+          remote_host: 101.132.60.231
+          remote_port: "22"
+          remote_user: root
+          remote_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Deploy signal service binary
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz
+          path: signal/target/release/signal
+          remote_path: /opt/technological-trappist/signal/
+          remote_host: 101.132.60.231
+          remote_port: "22"
+          remote_user: root
+          remote_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Restart signal service
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: 101.132.60.231
+          port: 22
+          username: root
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+            chmod +x /opt/technological-trappist/signal/signal
+            systemctl daemon-reload
+            systemctl enable technological-trappist-signal.service
+            systemctl restart technological-trappist-signal.service
+            systemctl is-active --quiet technological-trappist-signal.service
+            curl -fsS http://127.0.0.1:3000/health
 
       - name: Test and reload nginx
         uses: appleboy/ssh-action@v1.2.2
@@ -93,7 +143,7 @@ jobs:
             nginx -t
             systemctl reload nginx
 
-      - name: Deploy to server via rsync
+      - name: Deploy site to server via rsync
         uses: burnett01/rsync-deployments@7.0.1
         with:
           switches: -avz --delete

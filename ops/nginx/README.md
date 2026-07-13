@@ -1,6 +1,6 @@
 # Nginx deployment notes
 
-`stream-auth.conf` protects `/stream/` with nginx Basic Auth.
+`stream-auth.conf` protects `/stream/` with nginx Basic Auth and proxies `/signal/` to the local WebRTC signaling service at `127.0.0.1:3000`.
 
 ## Basic Auth credentials
 
@@ -58,4 +58,14 @@ server {
 }
 ```
 
-After the one-time include is in place, GitHub Actions will keep `/etc/nginx/snippets/stream-auth.conf` synchronized, run `nginx -t`, and reload nginx on each deploy.
+After the one-time include is in place, GitHub Actions will keep `/etc/nginx/snippets/stream-auth.conf` synchronized, deploy and restart the systemd service `technological-trappist-signal.service`, run `nginx -t`, and reload nginx on each deploy.
+
+## Runtime checks
+
+```bash
+systemctl status technological-trappist-signal.service
+curl -fsS http://127.0.0.1:3000/health
+curl -I https://mag1cian.top/signal/health
+```
+
+`/stream/` uses `wss://mag1cian.top/signal/ws?peerId=broadcaster`, and `/live/` uses the same endpoint with a generated viewer peer ID.

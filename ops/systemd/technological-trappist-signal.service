@@ -1,0 +1,15 @@
+[Unit]
+Description=Technological Trappist WebRTC signaling service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/technological-trappist/signal
+ExecStart=/opt/technological-trappist/signal/signal
+Restart=always
+RestartSec=3
+Environment=RUST_LOG=signal=info,tower_http=info
+
+[Install]
+WantedBy=multi-user.target
