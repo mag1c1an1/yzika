@@ -67,7 +67,20 @@ jobs:
 
             if [ -n "$STREAM_HTPASSWD" ]; then
               printf '%s\n' "$STREAM_HTPASSWD" > /etc/nginx/.htpasswd-stream
-              chmod 640 /etc/nginx/.htpasswd-stream
+            fi
+
+            if [ -f /etc/nginx/.htpasswd-stream ]; then
+              chown root:root /etc/nginx/.htpasswd-stream
+
+              if getent group www-data >/dev/null 2>&1; then
+                chgrp www-data /etc/nginx/.htpasswd-stream
+                chmod 640 /etc/nginx/.htpasswd-stream
+              elif getent group nginx >/dev/null 2>&1; then
+                chgrp nginx /etc/nginx/.htpasswd-stream
+                chmod 640 /etc/nginx/.htpasswd-stream
+              else
+                chmod 644 /etc/nginx/.htpasswd-stream
+              fi
             fi
 
       - name: Deploy nginx stream and signal snippet

@@ -18,7 +18,7 @@ You can generate the value on a machine with `htpasswd` installed:
 htpasswd -nbB admin 'your-password'
 ```
 
-If `STREAM_HTPASSWD` is configured, the deploy workflow writes it to `/etc/nginx/.htpasswd-stream` on every deploy.
+If `STREAM_HTPASSWD` is configured, the deploy workflow writes it to `/etc/nginx/.htpasswd-stream` on every deploy and sets permissions so nginx workers can read it.
 
 Manual fallback: create the password file directly on the server.
 
@@ -66,6 +66,19 @@ After the one-time include is in place, GitHub Actions will keep `/etc/nginx/sni
 systemctl status technological-trappist-signal.service
 curl -fsS http://127.0.0.1:3000/health
 curl -I https://mag1cian.top/signal/health
+curl -I https://mag1cian.top/stream/
 ```
+
+Unauthenticated `/stream/` should return `401`, not `500`. If nginx returns `500`, check the password file permissions first:
+
+```bash
+ls -l /etc/nginx/.htpasswd-stream
+sudo chgrp www-data /etc/nginx/.htpasswd-stream
+sudo chmod 640 /etc/nginx/.htpasswd-stream
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+The nginx error log will usually show `permission denied` or `No such file or directory` for `/etc/nginx/.htpasswd-stream` if Basic Auth is the cause.
 
 `/stream/` uses `wss://mag1cian.top/signal/ws?peerId=broadcaster`, and `/live/` uses the same endpoint with a generated viewer peer ID.
