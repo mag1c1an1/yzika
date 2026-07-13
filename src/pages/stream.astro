@@ -31,21 +31,23 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 </BaseLayout>
 
 <script>
-    const BROADCASTER_ID = "broadcaster";
-    const SIGNAL_PATH = "/signal/ws";
-    const rtcConfig: RTCConfiguration = {
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    };
-
-    type SignalMessage = {
-        type: string;
-        peerId?: string;
-        from?: string;
-        target?: string;
-        sdp?: RTCSessionDescriptionInit;
-        candidate?: RTCIceCandidateInit;
-        message?: string;
-    };
+    import {
+        BROADCASTER_ID,
+        CONNECTION_STATS_INTERVAL_MS,
+        SCREEN_SHARE_CONTENT_HINT,
+        createSignalUrl,
+        describeIceRoute,
+        describeScreenShareProfile,
+        formatBitrate,
+        getScreenShareEncodingForRoute,
+        getScreenShareRouteProfile,
+        getSelectedIceRoute,
+        initialScreenShareEncoding,
+        rtcConfig,
+        screenCaptureOptions,
+        type ScreenShareRouteProfile,
+        type SignalMessage,
+    } from "../lib/webrtc";
 
     const shareButton = document.querySelector<HTMLButtonElement>("#share");
     const stopShareButton =
@@ -59,6 +61,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     const knownViewers = new Set<string>();
     const peerConnections = new Map<string, RTCPeerConnection>();
     const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
+    const connectionStatsIntervals = new Map<string, number>();
+    const outboundStatsSnapshots = new Map<
+        string,
+        { bytesSent: number; timestamp: number }
+    >();
+    const appliedRouteProfiles = new Map<string, ScreenShareRouteProfile>();
 
     function addLog(message: string) {
         if (!logList) return;
@@ -96,12 +104,6 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
         shareButton.disabled = isSharing;
         stopShareButton.disabled = !isSharing;
-    }
-
-    function createSignalUrl(peerId: string) {
-        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        const params = new URLSearchParams({ peerId });
-        return `${protocol}//${location.host}${SIGNAL_PATH}?${params}`;
     }
 
     function connectSignal() {
@@ -221,6 +223,10 @@ import BaseLayout from "../layouts/BaseLayout.astro";
                 `观众 ${viewerId} 连接状态：${peerConnection.connectionState}`,
             );
 
+            if (peerConnection.connectionState === "connected") {
+                startViewerStats(viewerId, peerConnection);
+            }
+
             if (["failed", "closed"].includes(peerConnection.connectionState)) {
                 closeViewerConnection(viewerId);
             }
@@ -229,6 +235,135 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         });
 
         return peerConnection;
+    }
+
+    async function applyVideoSenderLimits(
+        sender: RTCRtpSender,
+        encoding: RTCRtpEncodingParameters,
+    ) {
+        const parameters = sender.getParameters();
+        parameters.encodings =
+            parameters.encodings && parameters.encodings.length > 0
+                ? parameters.encodings
+                : [{}];
+        parameters.encodings[0] = {
+            ...parameters.encodings[0],
+            ...encoding,
+        };
+
+        try {
+            await sender.setParameters(parameters);
+        } catch (error) {
+            addLog("当前浏览器未完全应用视频码率限制");
+            console.error(error);
+        }
+    }
+
+    async function applyRouteBasedVideoLimits(
+        viewerId: string,
+        peerConnection: RTCPeerConnection,
+        route: Awaited<ReturnType<typeof getSelectedIceRoute>>,
+    ) {
+        const profile = getScreenShareRouteProfile(route);
+        if (
+            profile === "unknown" ||
+            appliedRouteProfiles.get(viewerId) === profile
+        ) {
+            return;
+        }
+
+        const videoSender = peerConnection
+            .getSenders()
+            .find((sender) => sender.track?.kind === "video");
+        if (!videoSender) return;
+
+        await applyVideoSenderLimits(
+            videoSender,
+            getScreenShareEncodingForRoute(route),
+        );
+        appliedRouteProfiles.set(viewerId, profile);
+        addLog(
+            `观众 ${viewerId} 已切换到${describeScreenShareProfile(profile)}`,
+        );
+    }
+
+    async function getOutboundVideoBitrate(
+        viewerId: string,
+        peerConnection: RTCPeerConnection,
+    ) {
+        const stats = await peerConnection.getStats();
+        let bytesSent: number | undefined;
+        let timestamp: number | undefined;
+
+        stats.forEach((stat) => {
+            const outbound = stat as RTCStats & {
+                bytesSent?: number;
+                kind?: string;
+                mediaType?: string;
+            };
+
+            if (
+                stat.type === "outbound-rtp" &&
+                (outbound.kind === "video" || outbound.mediaType === "video") &&
+                outbound.bytesSent !== undefined
+            ) {
+                bytesSent = outbound.bytesSent;
+                timestamp = outbound.timestamp;
+            }
+        });
+
+        if (bytesSent === undefined || timestamp === undefined) {
+            return undefined;
+        }
+
+        const previous = outboundStatsSnapshots.get(viewerId);
+        outboundStatsSnapshots.set(viewerId, { bytesSent, timestamp });
+
+        if (!previous || timestamp <= previous.timestamp) {
+            return undefined;
+        }
+
+        return (
+            ((bytesSent - previous.bytesSent) * 8 * 1000) /
+            (timestamp - previous.timestamp)
+        );
+    }
+
+    function startViewerStats(
+        viewerId: string,
+        peerConnection: RTCPeerConnection,
+    ) {
+        stopViewerStats(viewerId);
+
+        const reportStats = async () => {
+            const route = await getSelectedIceRoute(peerConnection);
+            await applyRouteBasedVideoLimits(viewerId, peerConnection, route);
+            const bitrate = await getOutboundVideoBitrate(
+                viewerId,
+                peerConnection,
+            );
+            addLog(
+                `观众 ${viewerId}：${describeIceRoute(route)}，发送 ${formatBitrate(bitrate)}`,
+            );
+        };
+
+        void reportStats();
+        const intervalId = window.setInterval(
+            () => void reportStats(),
+            CONNECTION_STATS_INTERVAL_MS,
+        );
+        connectionStatsIntervals.set(viewerId, intervalId);
+    }
+
+    function stopViewerStats(viewerId: string) {
+        const intervalId = connectionStatsIntervals.get(viewerId);
+        if (intervalId !== undefined) {
+            window.clearInterval(intervalId);
+        }
+
+        connectionStatsIntervals.delete(viewerId);
+        outboundStatsSnapshots.delete(viewerId);
+        appliedRouteProfiles.delete(viewerId);
     }
 
     async function startViewerStream(viewerId: string) {
@@ -241,7 +376,13 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             const peerConnection = createPeerConnection(viewerId);
 
             for (const track of screenStream.getTracks()) {
-                peerConnection.addTrack(track, screenStream);
+                const sender = peerConnection.addTrack(track, screenStream);
+                if (track.kind === "video") {
+                    await applyVideoSenderLimits(
+                        sender,
+                        initialScreenShareEncoding,
+                    );
+                }
             }
 
             const offer = await peerConnection.createOffer();
@@ -313,6 +454,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     }
 
     function closeViewerConnection(viewerId: string) {
+        stopViewerStats(viewerId);
         peerConnections.get(viewerId)?.close();
         peerConnections.delete(viewerId);
         pendingIceCandidates.delete(viewerId);
@@ -355,16 +497,24 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         }
 
         try {
-            screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
-                audio: false,
-            });
+            screenStream =
+                await navigator.mediaDevices.getDisplayMedia(
+                    screenCaptureOptions,
+                );
 
             if (localVideo) {
                 localVideo.srcObject = screenStream;
             }
 
             const [videoTrack] = screenStream.getVideoTracks();
+            if (videoTrack) {
+                videoTrack.contentHint = SCREEN_SHARE_CONTENT_HINT;
+                const settings = videoTrack.getSettings();
+                addLog(
+                    `共享参数：${settings.width ?? "?"}x${settings.height ?? "?"}@${settings.frameRate ?? "?"}fps`,
+                );
+            }
+
             videoTrack?.addEventListener("ended", stopScreenShare, {
                 once: true,
             });

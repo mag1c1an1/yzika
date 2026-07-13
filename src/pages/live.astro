@@ -26,22 +26,17 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 </BaseLayout>
 
 <script>
-    const BROADCASTER_ID = "broadcaster";
-    const SIGNAL_PATH = "/signal/ws";
-    const PLAYBACK_TIMEOUT_MS = 4000;
-    const rtcConfig: RTCConfiguration = {
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-    };
-
-    type SignalMessage = {
-        type: string;
-        peerId?: string;
-        from?: string;
-        target?: string;
-        sdp?: RTCSessionDescriptionInit;
-        candidate?: RTCIceCandidateInit;
-        message?: string;
-    };
+    import {
+        BROADCASTER_ID,
+        CONNECTION_STATS_INTERVAL_MS,
+        PLAYBACK_TIMEOUT_MS,
+        createSignalUrl,
+        describeIceRoute,
+        formatBitrate,
+        getSelectedIceRoute,
+        rtcConfig,
+        type SignalMessage,
+    } from "../lib/webrtc";
 
     const playButton = document.querySelector<HTMLButtonElement>("#play");
     const stopButton = document.querySelector<HTMLButtonElement>("#stop");
@@ -56,6 +51,9 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     let peerConnection: RTCPeerConnection | undefined;
     let wantsPlayback = false;
     let playbackTimeoutId: number | undefined;
+    let connectionStatsIntervalId: number | undefined;
+    let inboundStatsSnapshot:
+        { bytesReceived: number; timestamp: number } | undefined;
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
 
     function addLog(message: string) {
@@ -76,12 +74,6 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
         playButton.disabled = isWaitingOrPlaying;
         stopButton.disabled = !isWaitingOrPlaying;
-    }
-
-    function createSignalUrl(peerId: string) {
-        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-        const params = new URLSearchParams({ peerId });
-        return `${protocol}//${location.host}${SIGNAL_PATH}?${params}`;
     }
 
     function connectSignal() {
@@ -191,6 +183,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     function stopPlayback(addStopLog = true) {
         wantsPlayback = false;
         clearPlaybackTimeout();
+        stopConnectionStats();
         closePeerConnection();
 
         if (remoteVideo) {
@@ -273,6 +266,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             });
             setStatus("playing");
             addLog("开始播放共享屏幕");
+            startConnectionStats(connection);
         });
 
         connection.addEventListener("icecandidate", (event) => {
@@ -288,12 +282,87 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         connection.addEventListener("connectionstatechange", () => {
             addLog(`播放连接状态：${connection.connectionState}`);
 
+            if (connection.connectionState === "connected") {
+                startConnectionStats(connection);
+            }
+
             if (["failed", "closed"].includes(connection.connectionState)) {
                 stopPlayback(false);
             }
         });
 
         return connection;
+    }
+
+    async function getInboundVideoBitrate(connection: RTCPeerConnection) {
+        const stats = await connection.getStats();
+        let bytesReceived: number | undefined;
+        let timestamp: number | undefined;
+
+        stats.forEach((stat) => {
+            const inbound = stat as RTCStats & {
+                bytesReceived?: number;
+                kind?: string;
+                mediaType?: string;
+            };
+
+            if (
+                stat.type === "inbound-rtp" &&
+                (inbound.kind === "video" || inbound.mediaType === "video") &&
+                inbound.bytesReceived !== undefined
+            ) {
+                bytesReceived = inbound.bytesReceived;
+                timestamp = inbound.timestamp;
+            }
+        });
+
+        if (bytesReceived === undefined || timestamp === undefined) {
+            return undefined;
+        }
+
+        const previous = inboundStatsSnapshot;
+        inboundStatsSnapshot = { bytesReceived, timestamp };
+
+        if (!previous || timestamp <= previous.timestamp) {
+            return undefined;
+        }
+
+        return (
+            ((bytesReceived - previous.bytesReceived) * 8 * 1000) /
+            (timestamp - previous.timestamp)
+        );
+    }
+
+    function startConnectionStats(connection: RTCPeerConnection) {
+        if (connectionStatsIntervalId !== undefined) return;
+
+        const reportStats = async () => {
+            const route = await getSelectedIceRoute(connection);
+            const bitrate = await getInboundVideoBitrate(connection);
+            const resolution =
+                remoteVideo?.videoWidth && remoteVideo.videoHeight
+                    ? `${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`
+                    : "未知分辨率";
+
+            addLog(
+                `播放路径：${describeIceRoute(route)}，接收 ${formatBitrate(bitrate)}，画面 ${resolution}`,
+            );
+        };
+
+        void reportStats();
+        connectionStatsIntervalId = window.setInterval(
+            () => void reportStats(),
+            CONNECTION_STATS_INTERVAL_MS,
+        );
+    }
+
+    function stopConnectionStats() {
+        if (connectionStatsIntervalId !== undefined) {
+            window.clearInterval(connectionStatsIntervalId);
+        }
+
+        connectionStatsIntervalId = undefined;
+        inboundStatsSnapshot = undefined;
     }
 
     async function acceptOffer(message: SignalMessage) {
@@ -351,6 +420,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     }
 
     function closePeerConnection() {
+        stopConnectionStats();
         peerConnection?.close();
         peerConnection = undefined;
         pendingIceCandidates.length = 0;
