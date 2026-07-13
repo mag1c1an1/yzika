@@ -11,6 +11,14 @@ import BaseLayout from "../layouts/BaseLayout.astro";
             <h3>远程屏幕</h3>
             <div class="button-row compact">
                 <button id="play" type="button">播放</button>
+                <button
+                    id="fullscreen"
+                    class="secondary"
+                    type="button"
+                    disabled
+                >
+                    全屏
+                </button>
                 <button id="stop" class="secondary" type="button" disabled>
                     停止
                 </button>
@@ -38,10 +46,17 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         type SignalMessage,
     } from "../lib/webrtc";
 
+    type FullscreenVideoElement = HTMLVideoElement & {
+        webkitEnterFullscreen?: () => void;
+        webkitDisplayingFullscreen?: boolean;
+    };
+
     const playButton = document.querySelector<HTMLButtonElement>("#play");
+    const fullscreenButton =
+        document.querySelector<HTMLButtonElement>("#fullscreen");
     const stopButton = document.querySelector<HTMLButtonElement>("#stop");
     const remoteVideo =
-        document.querySelector<HTMLVideoElement>("#remote-video");
+        document.querySelector<FullscreenVideoElement>("#remote-video");
     const peerStatus = document.querySelector<HTMLElement>("#peer-status");
     const logList = document.querySelector<HTMLOListElement>("#log");
 
@@ -74,6 +89,35 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
         playButton.disabled = isWaitingOrPlaying;
         stopButton.disabled = !isWaitingOrPlaying;
+    }
+
+    function setFullscreenEnabled(isEnabled: boolean) {
+        if (!fullscreenButton) return;
+        fullscreenButton.disabled = !isEnabled;
+    }
+
+    async function enterFullscreen() {
+        if (!remoteVideo?.srcObject) {
+            addLog("还没有播放画面，请先点击“播放”。");
+            return;
+        }
+
+        try {
+            if (remoteVideo.requestFullscreen) {
+                await remoteVideo.requestFullscreen();
+                return;
+            }
+
+            if (remoteVideo.webkitEnterFullscreen) {
+                remoteVideo.webkitEnterFullscreen();
+                return;
+            }
+
+            addLog("当前浏览器不支持视频全屏。");
+        } catch (error) {
+            addLog("进入全屏失败，请使用视频自带的全屏控件。");
+            console.error(error);
+        }
     }
 
     function connectSignal() {
@@ -189,6 +233,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         if (remoteVideo) {
             remoteVideo.srcObject = null;
         }
+        setFullscreenEnabled(false);
 
         setStatus("idle");
         setPlaybackControls(false);
@@ -261,6 +306,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
             clearPlaybackTimeout();
             remoteVideo.srcObject = stream;
+            setFullscreenEnabled(true);
             void remoteVideo.play().catch(() => {
                 addLog("浏览器阻止自动播放，请手动点击视频播放。");
             });
@@ -427,10 +473,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     }
 
     playButton?.addEventListener("click", startPlayback);
+    fullscreenButton?.addEventListener("click", enterFullscreen);
     stopButton?.addEventListener("click", () => stopPlayback());
     window.addEventListener("beforeunload", () => stopPlayback(false));
 
     setPlaybackControls(false);
+    setFullscreenEnabled(false);
     addLog("页面已加载，点击“播放”观看共享屏幕。");
 </script>
 
