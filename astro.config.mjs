@@ -7,7 +7,12 @@ import { defineConfig, fontProviders } from "astro/config";
 // https://astro.build/config
 export default defineConfig({
   site: "https://mag1cian.top",
-  integrations: [mdx(), sitemap()],
+  integrations: [
+    mdx(),
+    sitemap({
+      filter: (page) => !new URL(page).pathname.startsWith("/stream/"),
+    }),
+  ],
   fonts: [
     {
       provider: fontProviders.local(),

@@ -1,41 +1,105 @@
 name: Deploy to aliyun
 
 on:
-    push:
-        branches: [main]
-    workflow_dispatch:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 # 让同时运行的部署串行,避免旧 push 覆盖新 push
 concurrency:
-    group: deploy-aliyun
-    cancel-in-progress: false
+  group: deploy-aliyun
+  cancel-in-progress: false
 
 jobs:
-    deploy:
-        runs-on: ubuntu-latest
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v4
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-            - name: Setup Node
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "22.12.0"
-                  cache: "npm"
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: "npm"
 
-            - name: Install dependencies
-              run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-            - name: Build
-              run: npm run build
+      - name: Build
+        run: npm run build
 
-            - name: Deploy to server via rsync
-              uses: burnett01/rsync-deployments@7.0.1
-              with:
-                  switches: -avz --delete
-                  path: dist/
-                  remote_path: /var/www/mag1cian/
-                  remote_host: 101.132.60.231
-                  remote_port: "22"
-                  remote_user: root
-                  remote_key: ${{ secrets.DEPLOY_KEY }}
+      - name: Prepare nginx snippets directory
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: 101.132.60.231
+          port: 22
+          username: root
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+            mkdir -p /etc/nginx/snippets
+
+      - name: Deploy nginx basic auth credentials
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          STREAM_HTPASSWD: ${{ secrets.STREAM_HTPASSWD }}
+        with:
+          host: 101.132.60.231
+          port: 22
+          username: root
+          key: ${{ secrets.DEPLOY_KEY }}
+          envs: STREAM_HTPASSWD
+          script: |
+            set -e
+
+            if [ -n "$STREAM_HTPASSWD" ]; then
+              printf '%s\n' "$STREAM_HTPASSWD" > /etc/nginx/.htpasswd-stream
+              chmod 640 /etc/nginx/.htpasswd-stream
+            fi
+
+      - name: Deploy nginx stream auth snippet
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz
+          path: ops/nginx/stream-auth.conf
+          remote_path: /etc/nginx/snippets/
+          remote_host: 101.132.60.231
+          remote_port: "22"
+          remote_user: root
+          remote_key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Test and reload nginx
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: 101.132.60.231
+          port: 22
+          username: root
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+
+            if [ ! -f /etc/nginx/.htpasswd-stream ]; then
+              echo "Missing /etc/nginx/.htpasswd-stream. Create it with htpasswd before deploying /stream/."
+              exit 1
+            fi
+
+            if ! nginx -T 2>/dev/null | grep -q "/etc/nginx/snippets/stream-auth.conf"; then
+              echo "nginx does not include /etc/nginx/snippets/stream-auth.conf inside the site server block."
+              echo "Add: include /etc/nginx/snippets/stream-auth.conf;"
+              exit 1
+            fi
+
+            nginx -t
+            systemctl reload nginx
+
+      - name: Deploy to server via rsync
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+          path: dist/
+          remote_path: /var/www/mag1cian/
+          remote_host: 101.132.60.231
+          remote_port: "22"
+          remote_user: root
+          remote_key: ${{ secrets.DEPLOY_KEY }}

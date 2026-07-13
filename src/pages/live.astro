@@ -1,0 +1,44 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="About Me" description="Lorem ipsum dolor sit amet">
+    <h1 class="page-title">参见，参见蔡哥</h1>
+    <span id="peer-status" class="pill">RTCPeerConnection: idle</span>
+    <video id="remote-video" autoplay playsinline controls></video>
+</BaseLayout>
+
+<style>
+    .page-title {
+        font-size: 2rem;
+        margin-top: 0;
+        font-family:
+            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
+            "Source Han Serif TC", serif;
+        color: var(--text);
+    }
+
+    p {
+        margin-bottom: 1.2em;
+        line-height: 1.7;
+    }
+
+    video {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border: 1px solid var(--panel-border);
+        border-radius: 1rem;
+        background: #020617;
+    }
+
+    .pill {
+        width: fit-content;
+        border: 1px solid var(--panel-border);
+        border-radius: 999px;
+        padding: 0.35rem 0.65rem;
+        background: rgba(148, 163, 184, 0.1);
+        color: var(--muted);
+        font-size: 0.9rem;
+    }
+
+</style>
