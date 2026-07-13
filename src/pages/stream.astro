@@ -1,33 +1,44 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import "../styles/streaming.css";
 ---
 
 <BaseLayout title="Let's Streaming" description="Screen streaming">
-    <h1 class="page-title">Let's Streaming</h1>
-    <span id="peer-status" class="pill">RTCPeerConnection: idle</span>
+    <div class="streaming-page">
+        <h1 class="page-title">Let's Streaming</h1>
+        <span
+            id="peer-status"
+            class="pill"
+            data-state="idle"
+            role="status"
+            aria-live="polite"
+        >
+            状态：未连接
+        </span>
 
-    <div class="stack">
-        <div class="section-header">
-            <h3>本地屏幕</h3>
-            <div class="button-row compact">
-                <button id="share" type="button">共享屏幕</button>
-                <button
-                    id="stop-share"
-                    class="secondary"
-                    type="button"
-                    disabled
-                >
-                    停止
-                </button>
+        <div class="stack">
+            <div class="section-header">
+                <h3>本地屏幕</h3>
+                <div class="button-row compact">
+                    <button id="share" type="button">共享屏幕</button>
+                    <button
+                        id="stop-share"
+                        class="secondary"
+                        type="button"
+                        disabled
+                    >
+                        停止
+                    </button>
+                </div>
             </div>
+            <video id="local-video" autoplay muted playsinline></video>
         </div>
-        <video id="local-video" autoplay muted playsinline></video>
-    </div>
 
-    <section class="panel stack log-panel">
-        <h2>事件日志</h2>
-        <ol id="log" class="log"></ol>
-    </section>
+        <section class="panel stack log-panel">
+            <h2>事件日志</h2>
+            <ol id="log" class="log"></ol>
+        </section>
+    </div>
 </BaseLayout>
 
 <script>
@@ -76,9 +87,17 @@ import BaseLayout from "../layouts/BaseLayout.astro";
         logList.prepend(item);
     }
 
+    function getStatusState(status: string) {
+        if (status.includes("screen sharing")) return "playing";
+        if (status.includes("connected")) return "waiting";
+        if (status.includes("error")) return "error";
+        return "idle";
+    }
+
     function setStatus(status: string) {
         if (!peerStatus) return;
-        peerStatus.textContent = `RTCPeerConnection: ${status}`;
+        peerStatus.textContent = `状态：${status}`;
+        peerStatus.dataset.state = getStatusState(status);
     }
 
     function updateStatus() {
@@ -549,124 +568,3 @@ import BaseLayout from "../layouts/BaseLayout.astro";
     connectSignal();
     addLog("页面已加载，点击“共享屏幕”开始。");
 </script>
-
-<style>
-    .page-title {
-        font-size: 2rem;
-        margin-top: 0;
-        font-family:
-            HiraMinProN-W6, "Source Han Serif CN", "Source Han Serif SC",
-            "Source Han Serif TC", serif;
-        color: var(--text);
-    }
-
-    p {
-        margin-bottom: 1.2em;
-        line-height: 1.7;
-    }
-
-    video {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        border: 1px solid var(--panel-border);
-        border-radius: 1rem;
-        background: #020617;
-    }
-
-    .pill {
-        display: inline-flex;
-        width: fit-content;
-        border: 1px solid var(--panel-border);
-        border-radius: 999px;
-        padding: 0.35rem 0.65rem;
-        background: rgba(148, 163, 184, 0.1);
-        color: var(--muted);
-        font-size: 0.9rem;
-    }
-
-    .panel {
-        margin-top: 1rem;
-        margin-bottom: 1rem;
-        border: 1px solid var(--panel-border);
-        border-radius: 1.25rem;
-        padding: 1.25rem;
-        background: rgba(17, 24, 39, 0.86);
-        box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.18);
-    }
-
-    .stack {
-        display: grid;
-        align-content: start;
-        gap: 1rem;
-    }
-
-    .section-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        margin-top: 1rem;
-    }
-
-    .section-header h3 {
-        margin: 0;
-    }
-
-    .log-panel {
-        overflow: hidden;
-    }
-
-    .log {
-        display: grid;
-        min-height: 8rem;
-        max-height: 16rem;
-        margin: 0;
-        padding-left: 1.5rem;
-        padding-right: 0.5rem;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        gap: 0.35rem;
-        color: var(--muted);
-        font-family:
-            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-            "Liberation Mono", monospace;
-        font-size: 0.9rem;
-    }
-
-    .button-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
-    }
-
-    .button-row.compact {
-        gap: 0.5rem;
-    }
-
-    button {
-        border: 1px solid var(--panel-border);
-        border-radius: 999px;
-        padding: 0.45rem 0.9rem;
-        background: var(--text);
-        color: var(--bg);
-        cursor: pointer;
-        font: inherit;
-        transition:
-            opacity 0.2s ease,
-            transform 0.2s ease;
-    }
-
-    button:hover:not(:disabled) {
-        transform: translateY(-1px);
-    }
-
-    button.secondary {
-        background: transparent;
-        color: var(--text);
-    }
-
-    button:disabled {
-        cursor: not-allowed;
-        opacity: 0.5;
-    }
-</style>
