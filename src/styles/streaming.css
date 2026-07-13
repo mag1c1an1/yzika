@@ -1,6 +1,8 @@
 .streaming-page {
     display: grid;
     gap: 1rem;
+    --muted: #94a3b8;
+    --panel-border: rgba(148, 163, 184, 0.25);
 }
 
 .streaming-page .page-title {
@@ -114,14 +116,45 @@
     margin: 0;
     padding-left: 1.5rem;
     padding-right: 0.5rem;
-    overflow-y: auto;
+    overflow-y: scroll;
     overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
     gap: 0.35rem;
     color: var(--muted);
     font-family:
         ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
         "Liberation Mono", monospace;
     font-size: 0.9rem;
+}
+
+.streaming-page .log:hover {
+    scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent)
+        transparent;
+}
+
+.streaming-page .log::-webkit-scrollbar {
+    width: 0.75rem;
+}
+
+.streaming-page .log::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.streaming-page .log::-webkit-scrollbar-thumb {
+    border: 0.2rem solid transparent;
+    border-radius: 999px;
+    background-color: transparent;
+    background-clip: content-box;
+}
+
+.streaming-page .log:hover::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.streaming-page .log:hover::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--text) 70%, transparent);
 }
 
 .streaming-page .button-row {

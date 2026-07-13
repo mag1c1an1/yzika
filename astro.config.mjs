@@ -13,6 +13,27 @@ export default defineConfig({
       filter: (page) => !new URL(page).pathname.startsWith("/stream/"),
     }),
   ],
+  // Dev-only proxy so /stream and /live can talk to a locally running
+  // `cargo run` signal server on 127.0.0.1:3000. Production still goes
+  // through nginx; this block does not affect the static build.
+  // NOTE: Astro's top-level `server` option ignores `proxy`; WebSocket
+  // proxying must go through Vite's `server.proxy`.
+  vite: {
+    server: {
+      proxy: {
+        "/signal-admin": {
+          target: "ws://127.0.0.1:3000",
+          ws: true,
+          rewrite: (path) => path.replace(/^\/signal-admin/, ""),
+        },
+        "/signal": {
+          target: "ws://127.0.0.1:3000",
+          ws: true,
+          rewrite: (path) => path.replace(/^\/signal/, ""),
+        },
+      },
+    },
+  },
   fonts: [
     {
       provider: fontProviders.local(),

@@ -198,6 +198,7 @@ import "../styles/streaming.css";
             signalSocket.addEventListener(
                 "error",
                 () => {
+                    addLog("信令服务连接失败，请确认信令服务是否在线");
                     reject(new Error("signal connection failed"));
                 },
                 { once: true },
@@ -268,7 +269,6 @@ import "../styles/streaming.css";
             setStatus("error");
             setPlaybackControls(false);
             setFullscreenEnabled(false);
-            addLog("连接信令服务失败，请稍后重试。");
             console.error(error);
         }
     }
@@ -324,6 +324,7 @@ import "../styles/streaming.css";
                 break;
             }
             case "broadcast-unavailable": {
+                addLog("主播当前未在共享屏幕");
                 showNoPlayback();
                 break;
             }
@@ -334,6 +335,7 @@ import "../styles/streaming.css";
             }
             case "error": {
                 if (message.message?.includes("target peer not found")) {
+                    addLog("主播未在线（信令服务中未找到 broadcaster）");
                     showNoPlayback();
                 } else {
                     addLog(`信令错误：${message.message ?? "unknown error"}`);

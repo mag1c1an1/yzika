@@ -148,7 +148,7 @@ import "../styles/streaming.css";
         });
 
         signalSocket.addEventListener("error", () => {
-            addLog("信令连接错误");
+            addLog("信令服务连接失败，请确认信令服务是否在线");
         });
     }
 
@@ -196,9 +196,16 @@ import "../styles/streaming.css";
                 knownViewers.add(message.from);
                 addLog(`观众请求播放：${message.from}`);
 
+                // peer-joined 已触发建连，跳过避免重复 offer 导致
+                // 旧的 answer 被应用到新的 peer connection 上
+                if (peerConnections.has(message.from)) {
+                    break;
+                }
+
                 if (screenStream) {
                     await startViewerStream(message.from);
                 } else {
+                    addLog(`已通知观众 ${message.from} 当前未在共享`);
                     sendSignal({
                         type: "broadcast-unavailable",
                         target: message.from,
@@ -531,6 +538,15 @@ import "../styles/streaming.css";
                 const settings = videoTrack.getSettings();
                 addLog(
                     `共享参数：${settings.width ?? "?"}x${settings.height ?? "?"}@${settings.frameRate ?? "?"}fps`,
+                );
+            }
+
+            const audioTracks = screenStream.getAudioTracks();
+            if (audioTracks.length > 0) {
+                addLog(`已捕获音频轨道：${audioTracks.length} 条`);
+            } else {
+                addLog(
+                    "未捕获到音频轨道（屏幕共享未包含声音，需在选择器中勾选“共享系统音频”或共享浏览器标签页）",
                 );
             }
 
