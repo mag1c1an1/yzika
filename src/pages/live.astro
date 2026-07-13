@@ -48,6 +48,7 @@ import "../styles/streaming.css";
         PLAYBACK_TIMEOUT_MS,
         createSignalUrl,
         describeIceRoute,
+        enableStereoOpus,
         formatBitrate,
         getSelectedIceRoute,
         rtcConfig,
@@ -96,6 +97,9 @@ import "../styles/streaming.css";
     let connectionStatsIntervalId: number | undefined;
     let inboundStatsSnapshot:
         { bytesReceived: number; timestamp: number } | undefined;
+    let inboundAudioStatsSnapshot:
+        { bytesReceived: number; timestamp: number } | undefined;
+    let hasRemoteStream = false;
     const pendingIceCandidates: RTCIceCandidateInit[] = [];
 
     function addLog(message: string) {
@@ -358,13 +362,17 @@ import "../styles/streaming.css";
             clearPlaybackTimeout();
             remoteVideo.srcObject = stream;
             setFullscreenEnabled(true);
-            void remoteVideo.play().catch(() => {
-                addLog("浏览器阻止自动播放，请手动点击视频播放。");
-            });
-            setStatus("playing");
-            setPlaybackControls(true, "播放中");
-            addLog("开始播放共享屏幕");
-            startConnectionStats(connection);
+
+            if (!hasRemoteStream) {
+                hasRemoteStream = true;
+                void remoteVideo.play().catch(() => {
+                    addLog("浏览器阻止自动播放，请手动点击视频播放。");
+                });
+                setStatus("playing");
+                setPlaybackControls(true, "播放中");
+                addLog("开始播放共享屏幕");
+                startConnectionStats(connection);
+            }
         });
 
         connection.addEventListener("icecandidate", (event) => {
@@ -431,19 +439,125 @@ import "../styles/streaming.css";
         );
     }
 
+    async function getInboundAudioStats(connection: RTCPeerConnection) {
+        const stats = await connection.getStats();
+        let bytesReceived: number | undefined;
+        let timestamp: number | undefined;
+        let packetsReceived: number | undefined;
+        let packetsLost: number | undefined;
+        let jitter: number | undefined;
+        let concealedSamples: number | undefined;
+        let codecId: string | undefined;
+
+        stats.forEach((stat) => {
+            const inbound = stat as RTCStats & {
+                bytesReceived?: number;
+                codecId?: string;
+                concealedSamples?: number;
+                jitter?: number;
+                kind?: string;
+                mediaType?: string;
+                packetsLost?: number;
+                packetsReceived?: number;
+            };
+
+            if (
+                stat.type === "inbound-rtp" &&
+                (inbound.kind === "audio" || inbound.mediaType === "audio") &&
+                inbound.bytesReceived !== undefined
+            ) {
+                bytesReceived = inbound.bytesReceived;
+                timestamp = inbound.timestamp;
+                packetsReceived = inbound.packetsReceived;
+                packetsLost = inbound.packetsLost;
+                jitter = inbound.jitter;
+                concealedSamples = inbound.concealedSamples;
+                codecId = inbound.codecId;
+            }
+        });
+
+        const codec = codecId
+            ? (stats.get(codecId) as
+                  | (RTCStats & {
+                        mimeType?: string;
+                        clockRate?: number;
+                        channels?: number;
+                    })
+                  | undefined)
+            : undefined;
+        const codecSummary = codec?.mimeType
+            ? `${codec.mimeType}${codec.channels ? `/${codec.channels}ch` : ""}`
+            : undefined;
+
+        if (bytesReceived === undefined || timestamp === undefined) {
+            return {
+                bitrate: undefined,
+                codecSummary,
+                lossPercent: undefined,
+                jitterMs: undefined,
+                concealedSamples,
+            };
+        }
+
+        const previous = inboundAudioStatsSnapshot;
+        inboundAudioStatsSnapshot = { bytesReceived, timestamp };
+        const totalPackets =
+            packetsReceived !== undefined && packetsLost !== undefined
+                ? packetsReceived + packetsLost
+                : undefined;
+
+        if (!previous || timestamp <= previous.timestamp) {
+            return {
+                bitrate: undefined,
+                codecSummary,
+                lossPercent:
+                    totalPackets && packetsLost !== undefined
+                        ? (packetsLost / totalPackets) * 100
+                        : undefined,
+                jitterMs: jitter !== undefined ? jitter * 1000 : undefined,
+                concealedSamples,
+            };
+        }
+
+        return {
+            bitrate:
+                ((bytesReceived - previous.bytesReceived) * 8 * 1000) /
+                (timestamp - previous.timestamp),
+            codecSummary,
+            lossPercent:
+                totalPackets && packetsLost !== undefined
+                    ? (packetsLost / totalPackets) * 100
+                    : undefined,
+            jitterMs: jitter !== undefined ? jitter * 1000 : undefined,
+            concealedSamples,
+        };
+    }
+
     function startConnectionStats(connection: RTCPeerConnection) {
         if (connectionStatsIntervalId !== undefined) return;
 
         const reportStats = async () => {
             const route = await getSelectedIceRoute(connection);
-            const bitrate = await getInboundVideoBitrate(connection);
+            const videoBitrate = await getInboundVideoBitrate(connection);
+            const audioStats = await getInboundAudioStats(connection);
             const resolution =
                 remoteVideo?.videoWidth && remoteVideo.videoHeight
                     ? `${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`
                     : "未知分辨率";
+            const audioHealth = [
+                audioStats.codecSummary,
+                audioStats.lossPercent !== undefined
+                    ? `lost ${audioStats.lossPercent.toFixed(1)}%`
+                    : undefined,
+                audioStats.jitterMs !== undefined
+                    ? `jitter ${Math.round(audioStats.jitterMs)}ms`
+                    : undefined,
+            ]
+                .filter(Boolean)
+                .join("，");
 
             addLog(
-                `播放路径：${describeIceRoute(route)}，接收 ${formatBitrate(bitrate)}，画面 ${resolution}`,
+                `播放路径：${describeIceRoute(route)}，视频 ${formatBitrate(videoBitrate)}，音频 ${formatBitrate(audioStats.bitrate)}${audioHealth ? `（${audioHealth}）` : ""}，画面 ${resolution}`,
             );
         };
 
@@ -461,6 +575,7 @@ import "../styles/streaming.css";
 
         connectionStatsIntervalId = undefined;
         inboundStatsSnapshot = undefined;
+        inboundAudioStatsSnapshot = undefined;
     }
 
     async function acceptOffer(message: SignalMessage) {
@@ -475,7 +590,10 @@ import "../styles/streaming.css";
         await flushPendingIceCandidates();
 
         const answer = await connection.createAnswer();
-        await connection.setLocalDescription(answer);
+        const stereoAnswer = enableStereoOpus(answer.sdp ?? "");
+        await connection.setLocalDescription(
+            new RTCSessionDescription({ ...answer, sdp: stereoAnswer }),
+        );
 
         if (!connection.localDescription) {
             throw new Error("missing local description");
@@ -522,6 +640,7 @@ import "../styles/streaming.css";
         stopConnectionStats();
         peerConnection?.close();
         peerConnection = undefined;
+        hasRemoteStream = false;
         pendingIceCandidates.length = 0;
     }
 

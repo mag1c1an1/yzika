@@ -14,7 +14,17 @@ export const RELAY_SCREEN_SHARE_MAX_BITRATE = 1_200_000;
 export const RELAY_SCREEN_SHARE_FRAME_RATE = 15;
 export const RELAY_SCREEN_SHARE_SCALE_DOWN_BY = 1.5;
 
-export const screenCaptureOptions: DisplayMediaStreamOptions = {
+// WebRTC's default Opus settings are tuned for speech (mono, ~32kbps, DTX on).
+// Screen-share / system audio is stereo music, so we raise the bitrate and
+// enable stereo + disable DTX via SDP munging.
+export const AUDIO_MAX_BITRATE = 320_000;
+export const SCREEN_SHARE_AUDIO_CONTENT_HINT = "music";
+
+type ExtendedDisplayMediaStreamOptions = DisplayMediaStreamOptions & {
+  systemAudio?: "include" | "exclude";
+};
+
+export const screenCaptureOptions: ExtendedDisplayMediaStreamOptions = {
   video: {
     width: { ideal: SCREEN_SHARE_WIDTH, max: SCREEN_SHARE_WIDTH },
     height: { ideal: SCREEN_SHARE_HEIGHT, max: SCREEN_SHARE_HEIGHT },
@@ -23,7 +33,18 @@ export const screenCaptureOptions: DisplayMediaStreamOptions = {
       max: SCREEN_SHARE_FRAME_RATE,
     },
   },
-  audio: true,
+  // System / tab audio is NOT a microphone: disable echo cancellation,
+  // noise suppression, and auto gain control, otherwise the browser applies
+  // speech processing that mangles music / system sounds.
+  audio: {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    channelCount: { ideal: 2 },
+    sampleRate: { ideal: 48000 },
+    sampleSize: { ideal: 16 },
+  },
+  systemAudio: "include",
 };
 
 export const initialScreenShareEncoding: RTCRtpEncodingParameters = {
@@ -186,6 +207,59 @@ export function describeIceRoute(route: IceRouteInfo | undefined) {
   }
 
   return `P2P 直连 (${typeSummary || "unknown"})`;
+}
+
+/**
+ * Enable stereo Opus and disable DTX in an SDP offer/answer so that
+ * screen-share / system audio is not downmixed to mono and does not get
+ * choppy during non-speech segments. Browsers default Opus to mono + DTX
+ * which is fine for speech but bad for music / system audio.
+ */
+export function enableStereoOpus(sdp: string): string {
+  const lineEnding = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(/\r\n|\n/);
+  const opusRtpmapIndex = lines.findIndex((line) =>
+    /^a=rtpmap:\d+ opus\/48000(?:\/2)?$/i.test(line),
+  );
+  if (opusRtpmapIndex === -1) return sdp;
+
+  const opusPayloadType = lines[opusRtpmapIndex].match(/^a=rtpmap:(\d+)/)?.[1];
+  if (!opusPayloadType) return sdp;
+
+  const fmtpPrefix = `a=fmtp:${opusPayloadType} `;
+  const fmtpIndex = lines.findIndex((line) => line.startsWith(fmtpPrefix));
+  const params = new Map<string, string>();
+
+  if (fmtpIndex !== -1) {
+    const rawParams = lines[fmtpIndex].slice(fmtpPrefix.length).split(";");
+    for (const rawParam of rawParams) {
+      const [key, ...valueParts] = rawParam.trim().split("=");
+      if (!key || valueParts.length === 0) continue;
+      params.set(key.toLowerCase(), valueParts.join("="));
+    }
+  }
+
+  params.set("stereo", "1");
+  params.set("sprop-stereo", "1");
+  params.set("usedtx", "0");
+  params.set("maxaveragebitrate", String(AUDIO_MAX_BITRATE));
+  // VBR generally sounds better than CBR for music / system audio at the same
+  // average bitrate. Keep a high maxaveragebitrate and let Opus allocate bits
+  // where the source is complex.
+  params.set("cbr", "0");
+  params.set("maxplaybackrate", "48000");
+
+  const fmtpLine = `${fmtpPrefix}${[...params]
+    .map(([key, value]) => `${key}=${value}`)
+    .join(";")}`;
+
+  if (fmtpIndex !== -1) {
+    lines[fmtpIndex] = fmtpLine;
+  } else {
+    lines.splice(opusRtpmapIndex + 1, 0, fmtpLine);
+  }
+
+  return lines.join(lineEnding);
 }
 
 export function formatBitrate(bitsPerSecond: number | undefined) {

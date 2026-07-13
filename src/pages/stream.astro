@@ -44,11 +44,14 @@ import "../styles/streaming.css";
 <script>
     import {
         BROADCASTER_ID,
+        AUDIO_MAX_BITRATE,
         CONNECTION_STATS_INTERVAL_MS,
+        SCREEN_SHARE_AUDIO_CONTENT_HINT,
         SCREEN_SHARE_CONTENT_HINT,
         createBroadcasterSignalUrl,
         describeIceRoute,
         describeScreenShareProfile,
+        enableStereoOpus,
         formatBitrate,
         getScreenShareEncodingForRoute,
         getScreenShareRouteProfile,
@@ -74,6 +77,10 @@ import "../styles/streaming.css";
     const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
     const connectionStatsIntervals = new Map<string, number>();
     const outboundStatsSnapshots = new Map<
+        string,
+        { bytesSent: number; timestamp: number }
+    >();
+    const outboundAudioStatsSnapshots = new Map<
         string,
         { bytesSent: number; timestamp: number }
     >();
@@ -285,6 +292,27 @@ import "../styles/streaming.css";
         }
     }
 
+    async function applyAudioSenderLimits(
+        sender: RTCRtpSender,
+        maxBitrate: number,
+    ) {
+        const parameters = sender.getParameters();
+        parameters.encodings =
+            parameters.encodings && parameters.encodings.length > 0
+                ? parameters.encodings
+                : [{}];
+        parameters.encodings[0] = {
+            ...parameters.encodings[0],
+            maxBitrate,
+        };
+
+        try {
+            await sender.setParameters(parameters);
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
     async function applyRouteBasedVideoLimits(
         viewerId: string,
         peerConnection: RTCPeerConnection,
@@ -355,6 +383,66 @@ import "../styles/streaming.css";
         );
     }
 
+    async function getOutboundAudioStats(
+        viewerId: string,
+        peerConnection: RTCPeerConnection,
+    ) {
+        const stats = await peerConnection.getStats();
+        let bytesSent: number | undefined;
+        let timestamp: number | undefined;
+        let codecId: string | undefined;
+
+        stats.forEach((stat) => {
+            const outbound = stat as RTCStats & {
+                bytesSent?: number;
+                codecId?: string;
+                kind?: string;
+                mediaType?: string;
+            };
+
+            if (
+                stat.type === "outbound-rtp" &&
+                (outbound.kind === "audio" || outbound.mediaType === "audio") &&
+                outbound.bytesSent !== undefined
+            ) {
+                bytesSent = outbound.bytesSent;
+                timestamp = outbound.timestamp;
+                codecId = outbound.codecId;
+            }
+        });
+
+        const codec = codecId
+            ? (stats.get(codecId) as
+                  | (RTCStats & {
+                        mimeType?: string;
+                        clockRate?: number;
+                        channels?: number;
+                    })
+                  | undefined)
+            : undefined;
+        const codecSummary = codec?.mimeType
+            ? `${codec.mimeType}${codec.channels ? `/${codec.channels}ch` : ""}`
+            : undefined;
+
+        if (bytesSent === undefined || timestamp === undefined) {
+            return { bitrate: undefined, codecSummary };
+        }
+
+        const previous = outboundAudioStatsSnapshots.get(viewerId);
+        outboundAudioStatsSnapshots.set(viewerId, { bytesSent, timestamp });
+
+        if (!previous || timestamp <= previous.timestamp) {
+            return { bitrate: undefined, codecSummary };
+        }
+
+        return {
+            bitrate:
+                ((bytesSent - previous.bytesSent) * 8 * 1000) /
+                (timestamp - previous.timestamp),
+            codecSummary,
+        };
+    }
+
     function startViewerStats(
         viewerId: string,
         peerConnection: RTCPeerConnection,
@@ -364,12 +452,16 @@ import "../styles/streaming.css";
         const reportStats = async () => {
             const route = await getSelectedIceRoute(peerConnection);
             await applyRouteBasedVideoLimits(viewerId, peerConnection, route);
-            const bitrate = await getOutboundVideoBitrate(
+            const videoBitrate = await getOutboundVideoBitrate(
+                viewerId,
+                peerConnection,
+            );
+            const audioStats = await getOutboundAudioStats(
                 viewerId,
                 peerConnection,
             );
             addLog(
-                `观众 ${viewerId}：${describeIceRoute(route)}，发送 ${formatBitrate(bitrate)}`,
+                `观众 ${viewerId}：${describeIceRoute(route)}，视频 ${formatBitrate(videoBitrate)}，音频 ${formatBitrate(audioStats.bitrate)}${audioStats.codecSummary ? ` (${audioStats.codecSummary})` : ""}`,
             );
         };
 
@@ -389,6 +481,7 @@ import "../styles/streaming.css";
 
         connectionStatsIntervals.delete(viewerId);
         outboundStatsSnapshots.delete(viewerId);
+        outboundAudioStatsSnapshots.delete(viewerId);
         appliedRouteProfiles.delete(viewerId);
     }
 
@@ -408,11 +501,16 @@ import "../styles/streaming.css";
                         sender,
                         initialScreenShareEncoding,
                     );
+                } else if (track.kind === "audio") {
+                    await applyAudioSenderLimits(sender, AUDIO_MAX_BITRATE);
                 }
             }
 
             const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+            const stereoSdp = enableStereoOpus(offer.sdp ?? "");
+            await peerConnection.setLocalDescription(
+                new RTCSessionDescription({ ...offer, sdp: stereoSdp }),
+            );
 
             if (!peerConnection.localDescription) {
                 throw new Error("missing local description");
@@ -543,7 +641,15 @@ import "../styles/streaming.css";
 
             const audioTracks = screenStream.getAudioTracks();
             if (audioTracks.length > 0) {
+                for (const audioTrack of audioTracks) {
+                    audioTrack.contentHint = SCREEN_SHARE_AUDIO_CONTENT_HINT;
+                }
+
+                const settings = audioTracks[0]?.getSettings();
                 addLog(`已捕获音频轨道：${audioTracks.length} 条`);
+                addLog(
+                    `音频参数：${settings?.channelCount ?? "?"}ch @ ${settings?.sampleRate ?? "?"}Hz，AEC=${String(settings?.echoCancellation ?? "?")}，NS=${String(settings?.noiseSuppression ?? "?")}，AGC=${String(settings?.autoGainControl ?? "?")}`,
+                );
             } else {
                 addLog(
                     "未捕获到音频轨道（屏幕共享未包含声音，需在选择器中勾选“共享系统音频”或共享浏览器标签页）",
