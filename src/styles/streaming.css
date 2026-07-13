@@ -22,7 +22,7 @@
     width: 100%;
     aspect-ratio: 16 / 9;
     border: 1px solid var(--panel-border);
-    border-radius: 1rem;
+    border-radius: 0;
     background: #020617;
 }
 
