@@ -139,15 +139,18 @@ async fn handle_socket(mut socket: WebSocket, requested_peer_id: Option<String>,
 
     let (mut socket_sender, mut socket_receiver) = socket.split();
 
+    let send_peer_id = peer_id.clone();
     let send_task = tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            if socket_sender.send(message).await.is_err() {
+            if let Err(err) = socket_sender.send(message).await {
+                debug!(%send_peer_id, %err, "websocket send error");
                 break;
             }
         }
     });
 
     while let Some(result) = socket_receiver.next().await {
+        // 处理客户端发来的 offer / answer / ice-candidate 等
         match result {
             Ok(Message::Text(text)) => {
                 if text.len() > MAX_SIGNAL_MESSAGE_BYTES {
