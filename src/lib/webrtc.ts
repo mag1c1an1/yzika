@@ -1,5 +1,6 @@
 export const BROADCASTER_ID = "broadcaster";
 export const SIGNAL_PATH = "/signal/ws";
+export const BROADCASTER_SIGNAL_PATH = "/signal-admin/ws";
 export const PLAYBACK_TIMEOUT_MS = 4000;
 export const CONNECTION_STATS_INTERVAL_MS = 5000;
 
@@ -91,10 +92,18 @@ export type IceRouteInfo = {
 
 export type ScreenShareRouteProfile = "p2p" | "relay" | "unknown";
 
-export function createSignalUrl(peerId: string) {
+function createWebSocketUrl(path: string, peerId: string) {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const params = new URLSearchParams({ peerId });
-  return `${protocol}//${location.host}${SIGNAL_PATH}?${params}`;
+  return `${protocol}//${location.host}${path}?${params}`;
+}
+
+export function createSignalUrl(peerId: string) {
+  return createWebSocketUrl(SIGNAL_PATH, peerId);
+}
+
+export function createBroadcasterSignalUrl() {
+  return createWebSocketUrl(BROADCASTER_SIGNAL_PATH, BROADCASTER_ID);
 }
 
 export async function getSelectedIceRoute(

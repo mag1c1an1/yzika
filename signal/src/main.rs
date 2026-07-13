@@ -22,7 +22,13 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 
-type PeerSender = mpsc::UnboundedSender<Message>;
+const MAX_PEERS: usize = 32;
+const PEER_QUEUE_CAPACITY: usize = 64;
+const MAX_SIGNAL_MESSAGE_BYTES: usize = 64 * 1024;
+
+// Each peer gets a bounded outbound queue. This prevents a slow or disconnected
+// websocket from accumulating unbounded messages in memory.
+type PeerSender = mpsc::Sender<Message>;
 type Peers = Arc<Mutex<HashMap<String, PeerSender>>>;
 
 #[derive(Clone)]
@@ -98,13 +104,19 @@ async fn handle_socket(mut socket: WebSocket, requested_peer_id: Option<String>,
         return;
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let (tx, mut rx) = mpsc::channel::<Message>(PEER_QUEUE_CAPACITY);
 
     {
         let mut peers = state.peers.lock().await;
         if peers.contains_key(&peer_id) {
             drop(peers);
             send_socket_error(&mut socket, "peerId is already connected").await;
+            return;
+        }
+
+        if peers.len() >= MAX_PEERS {
+            drop(peers);
+            send_socket_error(&mut socket, "server is at peer capacity").await;
             return;
         }
 
@@ -137,7 +149,19 @@ async fn handle_socket(mut socket: WebSocket, requested_peer_id: Option<String>,
 
     while let Some(result) = socket_receiver.next().await {
         match result {
-            Ok(Message::Text(text)) => forward_signal(&state, &peer_id, text.as_str()).await,
+            Ok(Message::Text(text)) => {
+                if text.len() > MAX_SIGNAL_MESSAGE_BYTES {
+                    send_json_to_peer(
+                        &state,
+                        &peer_id,
+                        json!({ "type": "error", "message": "signal message is too large" }),
+                    )
+                    .await;
+                    continue;
+                }
+
+                forward_signal(&state, &peer_id, text.as_str()).await;
+            }
             Ok(Message::Close(_)) => break,
             Ok(Message::Binary(_)) => {
                 send_json_to_peer(
@@ -240,14 +264,14 @@ async fn forward_signal(state: &AppState, from: &str, raw_message: &str) {
     match target_sender {
         Some(sender) => {
             if sender
-                .send(Message::Text(message.to_string().into()))
+                .try_send(Message::Text(message.to_string().into()))
                 .is_err()
             {
                 error!(%from, %target, "failed to enqueue signal for target");
                 send_json_to_peer(
                     state,
                     from,
-                    json!({ "type": "error", "message": "target is not available" }),
+                    json!({ "type": "error", "message": "target is busy or not available" }),
                 )
                 .await;
             }
@@ -276,7 +300,7 @@ async fn send_json_to_peer(state: &AppState, peer_id: &str, payload: Value) {
     };
 
     if let Some(sender) = sender {
-        let _ = sender.send(Message::Text(payload.to_string().into()));
+        let _ = sender.try_send(Message::Text(payload.to_string().into()));
     }
 }
 
@@ -292,7 +316,7 @@ async fn broadcast_except(state: &AppState, excluded_peer_id: &str, payload: Val
     };
 
     for sender in senders {
-        let _ = sender.send(Message::Text(serialized.clone().into()));
+        let _ = sender.try_send(Message::Text(serialized.clone().into()));
     }
 }
 

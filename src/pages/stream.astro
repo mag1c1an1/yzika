@@ -46,7 +46,7 @@ import "../styles/streaming.css";
         BROADCASTER_ID,
         CONNECTION_STATS_INTERVAL_MS,
         SCREEN_SHARE_CONTENT_HINT,
-        createSignalUrl,
+        createBroadcasterSignalUrl,
         describeIceRoute,
         describeScreenShareProfile,
         formatBitrate,
@@ -133,7 +133,7 @@ import "../styles/streaming.css";
             return;
         }
 
-        signalSocket = new WebSocket(createSignalUrl(BROADCASTER_ID));
+        signalSocket = new WebSocket(createBroadcasterSignalUrl());
 
         signalSocket.addEventListener("open", () => {
             addLog("已连接信令服务");

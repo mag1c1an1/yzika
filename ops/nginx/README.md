@@ -1,6 +1,6 @@
 # Nginx deployment notes
 
-`stream-auth.conf` protects `/stream/` with nginx Basic Auth and proxies `/signal/` to the local WebRTC signaling service at `127.0.0.1:3000`.
+`stream-auth.conf` protects `/stream/` with nginx Basic Auth, proxies public viewer signaling at `/signal/`, and proxies admin-only broadcaster signaling at `/signal-admin/` to the local WebRTC signaling service at `127.0.0.1:3000`.
 
 ## Basic Auth credentials
 
@@ -66,6 +66,7 @@ After the one-time include is in place, GitHub Actions will keep `/etc/nginx/sni
 systemctl status technological-trappist-signal.service
 curl -fsS http://127.0.0.1:3000/health
 curl -I https://mag1cian.top/signal/health
+curl -I 'https://mag1cian.top/signal/ws?peerId=broadcaster'
 curl -I https://mag1cian.top/stream/
 ```
 
@@ -81,4 +82,4 @@ sudo systemctl reload nginx
 
 The nginx error log will usually show `permission denied` or `No such file or directory` for `/etc/nginx/.htpasswd-stream` if Basic Auth is the cause.
 
-`/stream/` uses `wss://mag1cian.top/signal/ws?peerId=broadcaster`, and `/live/` uses the same endpoint with a generated viewer peer ID.
+`/stream/` uses the protected `wss://mag1cian.top/signal-admin/ws?peerId=broadcaster`; `/live/` uses the public `wss://mag1cian.top/signal/ws?peerId=<viewer-id>`. Public `/signal/` rejects `peerId=broadcaster` with `403` so unauthenticated clients cannot claim the reserved broadcaster identity.
