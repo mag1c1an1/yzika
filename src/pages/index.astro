@@ -2,9 +2,10 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import FormattedDate from "../components/FormattedDate.astro";
 import { SITE_DESCRIPTION, SITE_TITLE } from "../consts";
-import { visibleBlogPosts } from "../content/utils";
+import { siteEntries } from "../lib/entries";
 
-const recentPosts = (await visibleBlogPosts()).slice(0, 2);
+// 文章 + public/ 下自动发现的裸 HTML + 手动登记的外链，一起按日期倒序。
+const recentPosts = (await siteEntries()).slice(0, 2);
 ---
 
 <BaseLayout title={SITE_TITLE} description={SITE_DESCRIPTION}>
@@ -29,19 +30,17 @@ const recentPosts = (await visibleBlogPosts()).slice(0, 2);
             {
                 recentPosts.map((post) => (
                     <li>
-                        <a href={`/blog/${post.id}/`} class="post-card">
+                        <a href={post.href} class="post-card">
                             <div class="card-body">
-                                <h3 class="card-title">{post.data.title}</h3>
-                                {post.data.pubDate && (
+                                <h3 class="card-title">{post.title}</h3>
+                                {post.pubDate && (
                                     <p class="card-date">
-                                        <FormattedDate
-                                            date={post.data.pubDate}
-                                        />
+                                        <FormattedDate date={post.pubDate} />
                                     </p>
                                 )}
-                                {post.data.description && (
+                                {post.description && (
                                     <p class="card-desc">
-                                        {post.data.description}
+                                        {post.description}
                                     </p>
                                 )}
                             </div>

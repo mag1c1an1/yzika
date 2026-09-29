@@ -1,8 +1,69 @@
 // @ts-check
 
+import fs from "node:fs";
+import path from "node:path";
+
 import mdx from "@astrojs/mdx";
 import sitemap from "@astrojs/sitemap";
 import { defineConfig, fontProviders } from "astro/config";
+
+/**
+ * Dev-only fix for directory-index HTML in `public/`.
+ *
+ * Vite 7 snapshots `public/` **once at dev-server startup** and only serves
+ * requests whose exact path is in that snapshot:
+ *
+ *   if (publicFiles && !publicFiles.has(toFilePath(req.url))) return next();
+ *
+ * So `/typst/index.html` works but the clean URL `/typst/` falls through to the
+ * Astro router and 404s — even though nginx serves it fine in production
+ * (`try_files $uri $uri/ =404` + `index index.html`). It also means files
+ * generated after startup (e.g. by `npm run build:typst`) 404 until a restart.
+ *
+ * This middleware runs before Vite's internal ones and serves those `.html`
+ * files directly, so dev matches production and `build:typst` + refresh works.
+ * Skipped for `/` so the Astro home page is never shadowed.
+ */
+const servePublicHtml = () => ({
+  name: "serve-public-html",
+  apply: "serve",
+  configureServer(server) {
+    const publicDir = path.resolve(server.config.publicDir ?? "public");
+
+    server.middlewares.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") return next();
+
+      const url = req.url ?? "";
+      if (!url.startsWith("/") || url.startsWith("/@")) return next();
+
+      const pathname = decodeURIComponent(url.split("?")[0]);
+      if (pathname === "/") return next();
+
+      // `/typst/` -> <public>/typst/index.html, `/typst` -> the same, so a
+      // trailing slash is optional exactly like nginx's `try_files $uri $uri/`.
+      const candidates = [
+        path.join(publicDir, pathname),
+        path.join(publicDir, pathname, "index.html"),
+      ];
+
+      for (const file of candidates) {
+        if (!file.startsWith(publicDir + path.sep)) continue; // 防目录穿越
+        if (!file.endsWith(".html")) continue;
+        if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) continue;
+
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+
+        if (req.method === "HEAD") return res.end();
+        fs.createReadStream(file).pipe(res);
+        return;
+      }
+
+      return next();
+    });
+  },
+});
 
 // https://astro.build/config
 export default defineConfig({
@@ -19,6 +80,7 @@ export default defineConfig({
   // NOTE: Astro's top-level `server` option ignores `proxy`; WebSocket
   // proxying must go through Vite's `server.proxy`.
   vite: {
+    plugins: [servePublicHtml()],
     server: {
       proxy: {
         "/signal-admin": {

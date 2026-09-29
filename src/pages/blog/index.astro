@@ -2,9 +2,11 @@
 import BaseLayout from "../../layouts/BaseLayout.astro";
 import FormattedDate from "../../components/FormattedDate.astro";
 import { SITE_DESCRIPTION, SITE_TITLE } from "../../consts";
-import { visibleBlogPosts } from "../../content/utils";
+import { siteEntries } from "../../lib/entries";
 
-const posts = await visibleBlogPosts();
+// 文章 + public/ 下自动发现的裸 HTML + 手动登记的外链。
+// 只想要纯文章列表的话，换回 visibleBlogPosts() 即可。
+const posts = await siteEntries();
 ---
 
 <BaseLayout title={SITE_TITLE} description={SITE_DESCRIPTION}>
@@ -14,21 +16,19 @@ const posts = await visibleBlogPosts();
             {
                 posts.map((post) => (
                     <li>
-                        <a href={`/blog/${post.id}/`} class="post-card">
+                        <a href={post.href} class="post-card">
                             <div class="card-body">
                                 <h3 class="blog-item-title card-title">
-                                    {post.data.title}
+                                    {post.title}
                                 </h3>
-                                {post.data.pubDate && (
+                                {post.pubDate && (
                                     <p class="card-date">
-                                        <FormattedDate
-                                            date={post.data.pubDate}
-                                        />
+                                        <FormattedDate date={post.pubDate} />
                                     </p>
                                 )}
-                                {post.data.description && (
+                                {post.description && (
                                     <p class="card-desc">
-                                        {post.data.description}
+                                        {post.description}
                                     </p>
                                 )}
                             </div>
